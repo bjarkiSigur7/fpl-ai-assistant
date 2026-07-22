@@ -1,26 +1,168 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ------------------------------------------------------------------ */
+/* the quant desk for football — dark warm-charcoal chrome, one accent */
+/* ------------------------------------------------------------------ */
+
+@theme {
+  /* chrome */
+  --color-bg: #0d0d0d;
+  --color-surface: #1a1a19;
+  --color-raised: #21211f;
+  --color-hairline: rgba(255, 255, 255, 0.1);
+  --color-hairline-soft: rgba(255, 255, 255, 0.06);
+
+  /* ink (text is only ever ink — never series colors) */
+  --color-ink: #ffffff;
+  --color-ink-mid: #c3c2b7;
+  --color-ink-dim: #898781;
+
+  /* the ONE accent: pitch green — verdict / action moments / positive deltas */
+  --color-pitch: #0ca30c;
+  --color-pitch-bright: #12c112;
+  --color-pitch-deep: #0a5d0a;
+  --color-neg: #e66767;
+
+  /* status (always icon + label, never color alone) */
+  --color-good: #0ca30c;
+  --color-warn: #fab219;
+  --color-crit: #d03b3b;
+
+  /* chart chrome + validated dark-surface series set (use in order) */
+  --color-grid: #2c2c2a;
+  --color-s1: #3987e5;
+  --color-s2: #d95926;
+  --color-s3: #199e70;
+  --color-s4: #c98500;
+
+  /* typography is the brand */
+  --font-display: var(--font-archivo), sans-serif;
+  --font-sans: var(--font-plex-sans), sans-serif;
+  --font-mono: var(--font-plex-mono), monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-ink-mid);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  /* faint desk grid — barely-there dot matrix, precision not decoration */
+  background-image: radial-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+::selection {
+  background: rgba(12, 163, 12, 0.35);
+  color: #ffffff;
+}
+
+/* custom classes live in the components layer so Tailwind utilities can
+   override them (e.g. a green verdict word, a 4%-opacity watermark) */
+@layer components {
+  /* numbers are always tabular */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* micro-label: the desk's small print */
+  .microlabel {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-dim);
+  }
+
+  /* display type: big, confident, tight, uppercase */
+  .display {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    line-height: 0.92;
+    color: var(--color-ink);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* motion: one orchestrated stagger reveal + skeleton shimmer          */
+/* ------------------------------------------------------------------ */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.25, 1) both;
+}
+
+@keyframes shimmer {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+.skeleton {
+  background: var(--color-raised);
+  border-radius: 4px;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes tickpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tickpulse {
+  animation: tickpulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .skeleton,
+  .tickpulse {
+    animation: none;
+  }
+  .skeleton {
+    opacity: 0.7;
+  }
+}
+
+/* thin scrollbars for log tails / timelines */
+.deskscroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.deskscroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.deskscroll::-webkit-scrollbar-thumb {
+  background: #2c2c2a;
+  border-radius: 4px;
+}
+.deskscroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c2a transparent;
 }

@@ -128,6 +128,12 @@ class SolveParams(BaseModel):
         "an already-active chip from the state stays committed regardless "
         "(it cannot be un-played). This is the optimizer.chips coordination field.",
     )
+    banned_chip_gws: dict[int, frozenset[str]] = Field(
+        default_factory=dict,
+        description='gw -> chip kinds ("wc") or instance ids ("wc1") not playable that '
+        "specific GW (e.g. transfer chips at the first GW of an initial build, where a "
+        "Free Hit is degenerate: there is no prior squad to revert to)",
+    )
     no_chips: bool = False
     max_hits_per_gw: int | None = Field(
         default=None, ge=0, description="Max penalized transfers (count, not points) per GW"
@@ -548,6 +554,19 @@ class _PlanModel:
         self.allowed: dict[str, set[int]] = {kind: set() for kind in _CHIP_KINDS}
         for cid, ws in self.instance_weeks.items():
             self.allowed[cid[:2]].update(ws)
+        # per-GW bans; applied before the active-chip add so an active chip always wins
+        for gw, chips in params.banned_chip_gws.items():
+            for chip in chips:
+                kind = str(chip)[:2].lower()
+                if kind in self.allowed:
+                    self.allowed[kind].discard(gw)
+        # None-state (initial build): transfer chips at the first GW are degenerate —
+        # a Free Hit has no prior squad to revert to and a Wildcard adds nothing to the
+        # unlimited initial transfers — so they are never playable there (an explicit
+        # forced_chips entry for that GW raises InfeasiblePlanError below, on purpose).
+        if self.state is None:
+            for kind in ("wc", "fh"):
+                self.allowed[kind].discard(self.start)
         # an already-active chip is playable at start even though its instance was consumed
         self.active_kind: str | None = None
         if self.state is not None and self.state.active_chip is not None:

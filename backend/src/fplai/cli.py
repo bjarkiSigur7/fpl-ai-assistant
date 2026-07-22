@@ -1,8 +1,8 @@
 """fplai command-line interface.
 
-Thin typer wrappers over :mod:`fplai.pipeline`.  Data commands (snapshot,
-backfill, build, refresh) are fully wired; model commands (train, predict,
-optimize) are stubs until stage 2+ modules land.
+Thin typer wrappers over :mod:`fplai.pipeline`: data commands (snapshot,
+backfill, build, refresh), model commands (train, predict), the optimizer
+(optimize) and the walk-forward backtest harness (backtest).
 """
 
 from typing import Annotated
@@ -115,11 +115,89 @@ def predict(
 
 
 @app.command()
-def optimize() -> None:
-    """Run the squad optimizer and chip planner on current predictions."""
+def optimize(
+    entry_id: Annotated[
+        int | None,
+        typer.Option(
+            "--entry-id",
+            help="FPL entry (team) id to plan for; default FPLAI_ENTRY_ID from .env. "
+            "Unset -> None-state initial-squad build.",
+        ),
+    ] = None,
+    season: Annotated[
+        int | None,
+        typer.Option(
+            help="Demo/backtest mode: season of the predictions window to optimize "
+            "(pre-launch: the 2025-26 demo the dashboard shows)."
+        ),
+    ] = None,
+    gw: Annotated[
+        int | None,
+        typer.Option(help="Demo/backtest mode: first GW of the window (needs --season)."),
+    ] = None,
+    horizon: Annotated[
+        int | None,
+        typer.Option(
+            help="Planning horizon in GWs (default: settings; clipped to available "
+            "predictions)."
+        ),
+    ] = None,
+    no_chips: Annotated[
+        bool, typer.Option("--no-chips", help="Skip the chip EV curves (faster).")
+    ] = False,
+    no_stability: Annotated[
+        bool,
+        typer.Option("--no-stability", help="Skip the plan-stability noise re-solves (faster)."),
+    ] = False,
+    stability_n: Annotated[
+        int, typer.Option(help="Number of noise re-solves for plan stability.")
+    ] = 30,
+) -> None:
+    """Run the squad optimizer on current predictions and write recommendation.json."""
     from fplai.pipeline import run_optimize
 
-    run_optimize()
+    if (season is None) != (gw is None):
+        raise typer.BadParameter("--season and --gw must be given together")
+    try:
+        run_optimize(
+            entry_id,
+            season,
+            gw,
+            horizon=horizon,
+            run_chips=not no_chips,
+            run_stability=not no_stability,
+            stability_n=stability_n,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]optimize failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command()
+def backtest(
+    season: Annotated[
+        int, typer.Option(help="Season start year to backtest, e.g. 2025.")
+    ],
+    gws: Annotated[
+        str | None,
+        typer.Option(
+            help="GWs to backtest: single values and/or inclusive ranges, e.g. '30..38'. "
+            "Default: the harness's full-season default."
+        ),
+    ] = None,
+) -> None:
+    """Run the walk-forward backtest harness (stage 4) over one season."""
+    from fplai.pipeline import parse_gws, run_backtest
+
+    try:
+        gw_list = parse_gws(gws)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--gws") from exc
+    try:
+        run_backtest(season, gw_list)
+    except RuntimeError as exc:
+        console.print(f"[red]backtest failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
 
 
 def main() -> None:

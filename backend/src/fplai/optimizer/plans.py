@@ -527,10 +527,14 @@ def _transfer_bullet(pair: TransferPair, window: pd.DataFrame, gw: int) -> str:
     in_part = pair.player_in_name or "(none)"
     if in_avg3 is not None:
         in_part += f" ({in_avg3:.1f} xP/GW next 3)"
-    out_part = pair.player_out_name or "(none)"
-    if pair.out_q0 is not None and pair.out_q0 >= AVAILABILITY_Q0_FLAG:
-        out_part += f" (q0 {pair.out_q0 * 100:.0f}%, availability risk)"
-    text = f"Bring in {in_part} for {out_part}: {pair.xp_delta:+.1f} xP over the horizon"
+    if pair.player_out is None:
+        # Initial-squad / draft mode: there is no outgoing player to name.
+        text = f"Draft {in_part}: {pair.xp_delta:+.1f} xP over the horizon"
+    else:
+        out_part = pair.player_out_name or "(none)"
+        if pair.out_q0 is not None and pair.out_q0 >= AVAILABILITY_Q0_FLAG:
+            out_part += f" (q0 {pair.out_q0 * 100:.0f}%, availability risk)"
+        text = f"Bring in {in_part} for {out_part}: {pair.xp_delta:+.1f} xP over the horizon"
     if pair.support_pct is not None:
         text += f", {pair.support_pct:.0f}% of noise re-solves agree"
     return text + "."

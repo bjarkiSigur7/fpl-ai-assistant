@@ -1,11 +1,7 @@
-"""End-to-end pipeline orchestration: snapshot -> backfill/pulls -> build -> models.
+"""End-to-end pipeline orchestration: snapshot -> pulls -> build -> models -> optimizer.
 
 Each stage is implemented in its own module; this file only sequences them and
 is the single place the CLI and API call into.
-
-Data stages (snapshot / backfill / build / the data portion of refresh) and the
-model stages (train / predict) are fully wired; optimize is a stub until the
-optimizer is threaded through ``refresh``.
 
 Train/predict artifacts live under ``config.MODELS_DIR`` with a
 ``manifest.json`` describing versions, the training window and headline
@@ -21,6 +17,18 @@ metrics.  ``run_predict`` supports two modes:
   walk-forward primitive.  Features for each target GW use only matches before
   that GW (enforced by ``features/windows.py``); models should be trained with
   a matching ``before_season``/``before_gw`` cutoff for a leakage-clean eval.
+
+``run_optimize`` consumes whatever ``predictions_gw.parquet`` /
+``predictions.parquet`` window is on disk and follows the same duality:
+
+* **live**: the predictions cover upcoming fixtures and the verdict targets
+  the next real deadline (with ``--entry-id`` / ``FPLAI_ENTRY_ID``, the plan
+  starts from the manager's actual squad via ``optimizer.state.from_entry``).
+* **pre-launch demo** (2026-27 not live yet): the predictions are a 2025-26
+  backtest window (``fplai predict --season 2025 --gw N`` then
+  ``fplai optimize [--season 2025 --gw N]``) and the verdict is an
+  initial-squad build over that window — **this is the demo the dashboard
+  shows until the 2026-27 game launches**.
 """
 
 from __future__ import annotations
@@ -30,7 +38,8 @@ import json
 import logging
 import math
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,12 +50,42 @@ if TYPE_CHECKING:
 
     from fplai.data.fpl_api import SeasonState
     from fplai.models.bonus import BonusCalibration
+    from fplai.optimizer.plans import Recommendation
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 #: Processed tables loaded by :func:`load_processed_tables` (odds is optional).
 _PROCESSED_TABLES = ("players", "teams", "fixtures", "player_match", "player_gw")
+
+
+def _parse_int_spec(spec: str | None, *, lo: int, hi: int, what: str, example: str) -> list[int] | None:
+    """Parse ``"30..34,38"``-style int specs into a sorted list (None/blank -> None)."""
+    if spec is None or not spec.strip():
+        return None
+    values: set[int] = set()
+    for entry in spec.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ".." in entry:
+            lo_s, _, hi_s = entry.partition("..")
+            try:
+                start, end = int(lo_s), int(hi_s)
+            except ValueError as exc:
+                raise ValueError(f"bad {what} range {entry!r} (want e.g. {example})") from exc
+            if start > end:
+                raise ValueError(f"bad {what} range {entry!r}: start > end")
+            values.update(range(start, end + 1))
+        else:
+            try:
+                values.add(int(entry))
+            except ValueError as exc:
+                raise ValueError(f"bad {what} {entry!r} (want e.g. {example})") from exc
+    for v in values:
+        if not lo <= v <= hi:
+            raise ValueError(f"{what} {v} out of supported range {lo}..{hi}")
+    return sorted(values)
 
 
 def parse_seasons(spec: str | None) -> list[int] | None:
@@ -62,31 +101,22 @@ def parse_seasons(spec: str | None) -> list[int] | None:
     Raises:
         ValueError: on malformed entries or years outside 2016..2026.
     """
-    if spec is None or not spec.strip():
-        return None
-    seasons: set[int] = set()
-    for entry in spec.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if ".." in entry:
-            lo_s, _, hi_s = entry.partition("..")
-            try:
-                lo, hi = int(lo_s), int(hi_s)
-            except ValueError as exc:
-                raise ValueError(f"bad season range {entry!r} (want e.g. 2016..2025)") from exc
-            if lo > hi:
-                raise ValueError(f"bad season range {entry!r}: start > end")
-            seasons.update(range(lo, hi + 1))
-        else:
-            try:
-                seasons.add(int(entry))
-            except ValueError as exc:
-                raise ValueError(f"bad season {entry!r} (want e.g. 2024 or 2016..2025)") from exc
-    for s in seasons:
-        if not 2016 <= s <= 2026:
-            raise ValueError(f"season {s} out of supported range 2016..2026")
-    return sorted(seasons)
+    return _parse_int_spec(spec, lo=2016, hi=2026, what="season", example="2016..2025")
+
+
+def parse_gws(spec: str | None) -> list[int] | None:
+    """Parse a CLI gameweek spec into a sorted list of GWs (1..38).
+
+    Same grammar as :func:`parse_seasons`: single GWs and/or inclusive ranges,
+    comma-separated.  ``None``/blank -> ``None`` ("the stage's default").
+
+    >>> parse_gws("30..32,38")
+    [30, 31, 32, 38]
+
+    Raises:
+        ValueError: on malformed entries or GWs outside 1..38.
+    """
+    return _parse_int_spec(spec, lo=1, hi=38, what="GW", example="30..38")
 
 
 def _table_row_counts(paths: dict[str, Path]) -> dict[str, int]:
@@ -255,13 +285,48 @@ def _refresh_pulls(state: SeasonState) -> None:
         console.print(f"  [yellow]ClubElo refresh failed: {exc}[/yellow]")
 
 
+def _print_launch_watch(state: SeasonState) -> None:
+    """Prominent end-of-refresh season status: the 2026-27 launch watch."""
+    from rich.panel import Panel
+
+    from fplai import rules
+
+    if state.is_live_2026_27:
+        deadline = (
+            f"\nNext deadline (UTC): {state.next_deadline_utc:%Y-%m-%d %H:%M} (GW{state.next_gw})"
+            if state.next_deadline_utc is not None
+            else ""
+        )
+        console.print(
+            Panel(
+                f"[bold green]2026-27 IS LIVE[/bold green] — predictions and "
+                f"recommendations now target the real season.{deadline}\n"
+                "Re-verify FPL_KNOWLEDGE UNCERTAIN items and retrain with `fplai train`.",
+                title="launch watch",
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                f"[bold yellow]2026-27 NOT LIVE yet[/bold yellow] — the FPL API still serves "
+                f"{rules.season_label(state.season)}.\n"
+                "Running in pre-launch demo mode: predictions/recommendations come from the "
+                "2025-26 backtest window (the demo the dashboard shows until launch).\n"
+                "GW1 deadline expected 2026-08-21 17:30 UTC — keep `fplai refresh` running daily.",
+                title="launch watch",
+            )
+        )
+
+
 def run_refresh() -> None:
     """Pull fresh data from all sources, rebuild tables, then the model stages.
 
     The data portion (snapshot -> incremental pulls -> build) is fully wired
     and must succeed; the model stages are best-effort so `fplai refresh`
-    stays exit-0: train is never run automatically (run `fplai train`),
-    predict runs when artifacts exist, optimize is not yet wired here.
+    stays exit-0: train is never run automatically (run `fplai train`);
+    predict and then optimize run when artifacts exist, each logging and
+    continuing on failure.  In pre-launch mode the refresh ends by printing
+    the launch-watch status (season state) prominently.
     """
     state = run_snapshot()
     console.print("[bold]refresh[/bold]: incremental pulls")
@@ -275,10 +340,15 @@ def run_refresh() -> None:
             run_predict()
         except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
             console.print(f"[bold]predict[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
+        try:
+            run_optimize()
+        except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
+            console.print(f"[bold]optimize[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
     else:
         console.print("[bold]train[/bold]: no model artifacts yet — run `fplai train` (skipping)")
         console.print("[bold]predict[/bold]: skipped (no model artifacts)")
-    console.print("[bold]optimize[/bold]: not yet wired into refresh (skipping)")
+        console.print("[bold]optimize[/bold]: skipped (no model artifacts)")
+    _print_launch_watch(state)
     console.print("[bold]refresh[/bold]: data refresh complete")
 
 
@@ -807,7 +877,511 @@ def run_predict(
     return paths
 
 
-def run_optimize() -> None:
-    """Run the squad optimizer and chip planner (stage 3 — not wired yet)."""
-    console.print("[bold]optimize[/bold]: optimization not yet wired")
-    raise SystemExit(1)
+# ---------------------------------------------------------------------------
+# optimize
+# ---------------------------------------------------------------------------
+
+
+def _optimizer_prices(
+    xp_window: pd.DataFrame,
+    processed: Path,
+    season: int,
+    start_gw: int,
+    pred_fixture: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build the optimizer's ``prices`` frame: one row per player in the xp window.
+
+    Columns: ``player_code, price, position, team_code, web_name`` (price in
+    £0.1m units) per the ``optimizer/milp.py`` contract.  Prices/positions are
+    re-derived from the latest ``player_gw`` snapshot at/before ``start_gw``
+    (falling back to the previous season for players without rows yet, e.g.
+    pre-GW1); the prediction frames' rolled-forward context fills any player
+    the snapshot misses.  Players with no resolvable price/position/team are
+    dropped with a warning (the MILP cannot place them).
+    """
+    import numpy as np
+    import pandas as pd
+
+    context_cols = ["player_code", "price", "position", "team_code", "web_name"]
+    base = (
+        xp_window.sort_values("gw", kind="stable")
+        .groupby("player_code", as_index=False)
+        .head(1)
+        .copy()
+    )
+    for col in context_cols[1:]:
+        if col not in base.columns:
+            base[col] = np.nan
+    base = base[context_cols].reset_index(drop=True)
+
+    # Secondary context: the per-fixture predictions frame (first fixture per player).
+    if pred_fixture is not None and len(pred_fixture):
+        fx = pred_fixture[
+            (pred_fixture["season"] == season) & (pred_fixture["gw"] >= start_gw)
+        ]
+        have = [c for c in ("price", "position", "team_code") if c in fx.columns]
+        if len(fx) and have:
+            fxc = (
+                fx.sort_values("gw", kind="stable")
+                .groupby("player_code", as_index=False)
+                .head(1)[["player_code", *have]]
+            )
+            base = base.merge(fxc, on="player_code", how="left", suffixes=("", "_fx"))
+            for col in have:
+                base[col] = base[col].where(base[col].notna(), base[f"{col}_fx"])
+                base = base.drop(columns=f"{col}_fx")
+
+    # Primary source: re-derive from the latest player_gw row at/before start_gw
+    # (previous-season rows cover players with no target-season appearance yet).
+    pg_path = processed / "player_gw.parquet"
+    if pg_path.exists():
+        pg = pd.read_parquet(
+            pg_path, columns=["season", "gw", "player_code", "team_code", "position", "value"]
+        )
+        mask = ((pg["season"] == season) & (pg["gw"] <= start_gw)) | (
+            pg["season"] == season - 1
+        )
+        snap = (
+            pg.loc[mask]
+            .sort_values(["season", "gw"], kind="stable")
+            .groupby("player_code", as_index=False)
+            .tail(1)
+            .rename(columns={"value": "price"})[["player_code", "price", "position", "team_code"]]
+        )
+        base = base.merge(snap, on="player_code", how="left", suffixes=("", "_pg"))
+        for col in ("price", "position", "team_code"):
+            base[col] = base[f"{col}_pg"].where(base[f"{col}_pg"].notna(), base[col])
+            base = base.drop(columns=f"{col}_pg")
+
+    # Names: fill gaps from the canonical players table when available.
+    players_path = processed / "players.parquet"
+    if base["web_name"].isna().any() and players_path.exists():
+        players = pd.read_parquet(players_path, columns=["player_code", "web_name"])
+        players = players.drop_duplicates("player_code")
+        base = base.merge(players, on="player_code", how="left", suffixes=("", "_pl"))
+        base["web_name"] = base["web_name"].where(
+            base["web_name"].notna(), base["web_name_pl"]
+        )
+        base = base.drop(columns="web_name_pl")
+
+    unresolved = (
+        base["price"].isna() | base["position"].isna() | base["team_code"].isna()
+    )
+    if unresolved.any():
+        console.print(
+            f"  [yellow]{int(unresolved.sum())} player(s) have no resolvable "
+            "price/position/team — excluded from the optimizer pool[/yellow]"
+        )
+        base = base.loc[~unresolved]
+    if base.empty:
+        raise ValueError("no players with resolvable prices — cannot optimize")
+    base["player_code"] = base["player_code"].astype(int)
+    base["price"] = base["price"].astype(float).round().astype(int)
+    base["team_code"] = base["team_code"].astype(int)
+    base["position"] = base["position"].astype(str)
+    base["web_name"] = [
+        str(n) if isinstance(n, str) and n else f"player {c}"
+        for c, n in zip(base["player_code"], base["web_name"], strict=True)
+    ]
+    return base.reset_index(drop=True)
+
+
+def _optimize_is_live(processed: Path, season: int, start_gw: int) -> bool:
+    """True when the target window still has unplayed fixtures (live mode)."""
+    import pandas as pd
+
+    fx_path = processed / "fixtures.parquet"
+    if not fx_path.exists():
+        return False
+    fx = pd.read_parquet(
+        fx_path, columns=["season", "gw", "kickoff_utc", "finished", "void"]
+    )
+    window = fx[(fx["season"] == season) & (fx["gw"] >= start_gw) & ~fx["void"].astype(bool)]
+    if window.empty:
+        return False
+    upcoming = window[
+        ~window["finished"].astype(bool)
+        & (window["kickoff_utc"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta("12h"))
+    ]
+    return not upcoming.empty
+
+
+def _entry_state(entry_id: int, pred_gw: pd.DataFrame) -> Any | None:
+    """Best-effort ``SquadState`` for ``entry_id``; None (with a warning) on failure.
+
+    Falls back to None-state (initial-squad mode) when the API call fails or when
+    the entry's ``(season, current_gw)`` has no prediction rows — the pre-launch
+    demo optimizes a 2025-26 backtest window that a live entry cannot match.
+    """
+    from fplai.optimizer import state as state_mod
+
+    try:
+        state = state_mod.from_entry(entry_id)
+    except Exception as exc:  # noqa: BLE001 - degrade to initial-squad mode, warned
+        console.print(
+            f"  [yellow]could not build squad state for entry {entry_id}: {exc} — "
+            "falling back to initial-squad mode[/yellow]"
+        )
+        return None
+    covered = (
+        (pred_gw["season"] == state.season) & (pred_gw["gw"] == state.current_gw)
+    ).any()
+    if not covered:
+        console.print(
+            f"  [yellow]entry {entry_id} is at season {state.season} GW{state.current_gw} "
+            "but the predictions on disk do not cover that GW — falling back to "
+            "initial-squad (demo) mode[/yellow]"
+        )
+        return None
+    return state
+
+
+@contextmanager
+def _capture_chip_curves() -> Iterator[dict[str, pd.DataFrame]]:
+    """Capture the raw chip-EV frame computed inside ``build_recommendation``.
+
+    ``fplai.optimizer.plans`` routes all chip-curve computation through its
+    module-level ``chip_ev_curves`` proxy (a documented monkeypatch seam).  We
+    temporarily wrap it so the pipeline can persist ``chip_curves.parquet``
+    without a second (expensive) round of forced-chip re-solves.  Single-threaded
+    CLI use only; the original proxy is always restored.
+    """
+    from fplai.optimizer import plans
+
+    captured: dict[str, pd.DataFrame] = {}
+    original = plans.chip_ev_curves
+
+    def _wrapped(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        curves = original(*args, **kwargs)
+        captured["curves"] = curves
+        return curves
+
+    plans.chip_ev_curves = _wrapped  # type: ignore[assignment]
+    try:
+        yield captured
+    finally:
+        plans.chip_ev_curves = original  # type: ignore[assignment]
+
+
+def _squad_position_lines(
+    codes: Sequence[int],
+    names: dict[int, str],
+    positions: dict[int, str],
+    captain: int | None = None,
+    vice: int | None = None,
+) -> list[str]:
+    """One display line per position group (GKP/DEF/MID/FWD) with (C)/(V) markers."""
+    lines: list[str] = []
+    for pos in ("GKP", "DEF", "MID", "FWD"):
+        members = [c for c in codes if positions.get(c) == pos]
+        if not members:
+            continue
+        parts = []
+        for c in members:
+            label = names.get(c, f"player {c}")
+            if c == captain:
+                label += " (C)"
+            elif c == vice:
+                label += " (V)"
+            parts.append(label)
+        lines.append(f"{pos}: " + ", ".join(parts))
+    unknown = [c for c in codes if positions.get(c) not in ("GKP", "DEF", "MID", "FWD")]
+    if unknown:
+        lines.append("?: " + ", ".join(names.get(c, f"player {c}") for c in unknown))
+    return lines
+
+
+def _print_verdict(rec: Recommendation, prices: pd.DataFrame) -> None:
+    """Rich-formatted weekly verdict: action, transfers, captain, chips, dream team."""
+    from rich.table import Table
+
+    from fplai import rules
+    from fplai.optimizer.plans import CHIP_NAMES
+
+    names = {int(c): str(n) for c, n in zip(prices["player_code"], prices["web_name"], strict=True)}
+    positions = {
+        int(c): str(p) for c, p in zip(prices["player_code"], prices["position"], strict=True)
+    }
+    price_of = {
+        int(c): int(p) for c, p in zip(prices["player_code"], prices["price"], strict=True)
+    }
+
+    if rec.action == "initial-squad":
+        headline = "build this initial squad (fresh £100.0m)"
+    elif rec.action == "hold":
+        headline = "hold — make no transfers"
+    elif rec.action.startswith("chip:"):
+        cid = rec.action.removeprefix("chip:")
+        headline = f"play {CHIP_NAMES.get(cid[:2], cid)} ({cid})"
+    else:
+        n = len(rec.transfers)
+        headline = f"make {n} transfer{'s' if n != 1 else ''}"
+    console.print(
+        f"\n[bold]verdict[/bold] — {rules.season_label(rec.season)} GW{rec.gw}: "
+        f"[bold cyan]{headline}[/bold cyan]  "
+        f"({rec.expected_points:.1f} xP this GW, plan objective {rec.objective:.1f})"
+    )
+
+    # In initial-squad mode every pick is a "transfer in" — the XI/squad display
+    # below covers it, so the 15-row table would be noise.
+    if rec.transfers and rec.action != "initial-squad":
+        table = Table(title="transfers this GW", title_justify="left")
+        for col in ("in", "out", "ΔxP (horizon)", "support"):
+            table.add_column(col)
+        for pair in rec.transfers:
+            table.add_row(
+                pair.player_in_name or "—",
+                pair.player_out_name or "—",
+                f"{pair.xp_delta:+.1f}",
+                f"{pair.support_pct:.0f}%" if pair.support_pct is not None else "—",
+            )
+        console.print(table)
+        if rec.hits:
+            console.print(f"  hits: −{rec.hits} pts")
+
+    if rec.captain is not None:
+        vice = f"; vice {names.get(rec.vice, rec.vice)}" if rec.vice is not None else ""
+        console.print(
+            f"  captain: [bold]{names.get(rec.captain, rec.captain)}[/bold]{vice}"
+        )
+    if rec.lineup:
+        console.print(f"  XI ({rec.formation or '?'}):")
+        for line in _squad_position_lines(rec.lineup, names, positions, rec.captain, rec.vice):
+            console.print(f"    {line}")
+        bench = ", ".join(names.get(c, f"player {c}") for c in rec.bench_order)
+        if bench:
+            console.print(f"    bench: {bench}")
+        cost = sum(price_of.get(c, 0) for c in rec.squad)
+        if cost:
+            console.print(f"    squad cost: £{cost / 10:.1f}m")
+
+    if rec.chip_advice:
+        table = Table(title="chip advice", title_justify="left")
+        for col in ("chip", "verdict", "planned GW", "EV now", "best GW", "best EV"):
+            table.add_column(col)
+        for adv in rec.chip_advice:
+            table.add_row(
+                adv.chip,
+                adv.verdict,
+                str(adv.planned_gw) if adv.planned_gw is not None else "—",
+                f"{adv.ev_now:+.1f}" if adv.ev_now is not None else "—",
+                str(adv.best_gw) if adv.best_gw is not None else "—",
+                f"{adv.best_ev:+.1f}" if adv.best_ev is not None else "—",
+            )
+        console.print(table)
+
+    dream = rec.dream_team
+    if dream is not None and rec.action != "initial-squad":
+        console.print(
+            f"  dream team (fresh £100m benchmark, GW{dream.gw}): "
+            f"{dream.expected_points:.1f} xP, {dream.formation or '?'}, "
+            f"£{dream.total_cost / 10:.1f}m"
+        )
+        for line in _squad_position_lines(
+            dream.lineup, names, positions, dream.captain, dream.vice
+        ):
+            console.print(f"    {line}")
+
+    if rec.rationale:
+        console.print("  [bold]why[/bold]:")
+        for bullet in rec.rationale[:6]:
+            console.print(f"    • {bullet}")
+
+
+def run_optimize(
+    entry_id: int | None = None,
+    season: int | None = None,
+    gw: int | None = None,
+    *,
+    horizon: int | None = None,
+    run_chips: bool = True,
+    run_stability: bool = True,
+    stability_n: int = 30,
+    processed_dir: Path | None = None,
+    out_dir: Path | None = None,
+) -> Recommendation:
+    """Run the squad optimizer on the predictions on disk and write the verdict.
+
+    Loads ``predictions_gw.parquet`` (+ ``predictions.parquet`` for per-fixture
+    context), re-derives the optimizer's prices/positions from the latest
+    ``player_gw`` snapshot, builds the :class:`~fplai.optimizer.state.SquadState`
+    (``entry_id`` argument, else ``FPLAI_ENTRY_ID``; None-state initial-squad
+    mode otherwise) and runs :func:`fplai.optimizer.plans.build_recommendation`
+    with ``horizon = min(settings.horizon_gws, available GWs)``.
+
+    Pre-launch demo mode: while 2026-27 is not live there are no upcoming
+    fixtures, so the predictions window on disk is a 2025-26 backtest
+    (``fplai predict --season 2025 --gw N``); ``--season``/``--gw`` select
+    within it and the verdict is the demo the dashboard shows until launch.
+
+    Artifacts (served by the API): ``recommendation.json`` (full
+    :class:`Recommendation`), ``dream_team.json`` (standalone benchmark squad)
+    and ``chip_curves.parquet`` (raw chip EV curves, when computed).
+
+    Args:
+        entry_id: FPL entry (team) id; falls back to ``settings.entry_id``
+            (0 = unset -> None-state initial-squad mode).
+        season/gw: Select this backtest window from the predictions on disk
+            (both or neither).
+        horizon: Planning horizon cap (default ``settings.horizon_gws``);
+            always clipped to the GWs available in the predictions.
+        run_chips/run_stability/stability_n: Forwarded to
+            ``build_recommendation`` (chip EV curves and noise re-solves are
+            the slow parts — disable for a fast verdict).
+        processed_dir/out_dir: Input/output overrides (default
+            ``config.PROCESSED_DIR``; ``out_dir`` defaults to the input dir).
+
+    Returns:
+        The :class:`~fplai.optimizer.plans.Recommendation` (also written to
+        ``recommendation.json``).
+
+    Raises:
+        FileNotFoundError: when no predictions exist on disk.
+        ValueError: when the requested season/GW window has no prediction rows.
+    """
+    import pandas as pd
+
+    from fplai import config
+    from fplai.optimizer import plans
+
+    if (season is None) != (gw is None):
+        raise ValueError("season and gw must be given together (demo mode) or not at all")
+
+    processed = Path(processed_dir) if processed_dir is not None else config.PROCESSED_DIR
+    out = Path(out_dir) if out_dir is not None else processed
+
+    gw_path = processed / "predictions_gw.parquet"
+    if not gw_path.exists():
+        raise FileNotFoundError(
+            f"{gw_path} is missing — run `fplai predict` first (pre-launch: "
+            "`fplai predict --season 2025 --gw 34` for the demo window)"
+        )
+    pred_gw = pd.read_parquet(gw_path)
+    if pred_gw.empty:
+        raise ValueError(f"{gw_path} is empty — re-run `fplai predict`")
+    fx_path = processed / "predictions.parquet"
+    pred_fx = pd.read_parquet(fx_path) if fx_path.exists() else None
+
+    # ---- target window selection -------------------------------------------------
+    if season is not None and gw is not None:
+        target_season, from_gw = int(season), int(gw)
+        if not ((pred_gw["season"] == target_season) & (pred_gw["gw"] >= from_gw)).any():
+            raise ValueError(
+                f"predictions_gw.parquet has no rows for season {target_season} "
+                f"GW>={from_gw} — run `fplai predict --season {target_season} "
+                f"--gw {from_gw}` first"
+            )
+    else:
+        target_season = int(pred_gw["season"].max())
+        from_gw = int(pred_gw.loc[pred_gw["season"] == target_season, "gw"].min())
+
+    # ---- squad state (entry vs None-state initial squad) -------------------------
+    resolved_entry = entry_id if entry_id is not None else (config.settings.entry_id or None)
+    state = _entry_state(int(resolved_entry), pred_gw) if resolved_entry else None
+    if state is not None:
+        target_season, from_gw = int(state.season), int(state.current_gw)
+
+    xp = pred_gw[(pred_gw["season"] == target_season) & (pred_gw["gw"] >= from_gw)].copy()
+    available_gws = sorted(int(g) for g in xp["gw"].unique())
+    start_gw = available_gws[0]
+    horizon_cap = horizon if horizon is not None else config.settings.horizon_gws
+    plan_horizon = max(1, min(horizon_cap, len(available_gws)))
+
+    live = _optimize_is_live(processed, target_season, start_gw)
+    prices = _optimizer_prices(xp, processed, target_season, start_gw, pred_fx)
+
+    mode = "live" if live else "pre-launch demo (backtest predictions)"
+    state_desc = f"entry {resolved_entry}" if state is not None else "none (initial squad)"
+    console.print(
+        f"[bold]optimize[/bold]: {mode} — season {target_season} GW{start_gw}, "
+        f"horizon {plan_horizon} (GWs {available_gws[:plan_horizon]}), "
+        f"{len(prices):,} players, state: {state_desc}"
+    )
+    if not live:
+        console.print(
+            "  [yellow]demo mode: optimizing a 2025-26 backtest window — this is what "
+            "the dashboard shows until the 2026-27 game launches[/yellow]"
+        )
+
+    as_of = dt.datetime.now(dt.UTC)
+    with _capture_chip_curves() as captured:
+        rec = plans.build_recommendation(
+            state,
+            xp,
+            prices,
+            as_of=as_of,
+            horizon=plan_horizon,
+            stability_n=stability_n,
+            run_chips=run_chips,
+            run_stability=run_stability,
+        )
+
+    # ---- artifacts (the API serves these files verbatim) -------------------------
+    out.mkdir(parents=True, exist_ok=True)
+    rec_path = out / "recommendation.json"
+    if state is not None and resolved_entry:
+        # Entry-scoped verdict: the wrapped shape lets GET /api/my-team/{entry_id}
+        # serve this file directly (it matches on the entry_id key); GET
+        # /api/recommendation unwraps the "recommendation" key transparently.
+        rec_path.write_text(
+            json.dumps(
+                {
+                    "entry_id": int(resolved_entry),
+                    "squad_state": json.loads(state.model_dump_json()),
+                    "recommendation": json.loads(rec.model_dump_json()),
+                },
+                indent=2,
+            )
+        )
+    else:
+        rec_path.write_text(rec.model_dump_json(indent=2))
+    written = [rec_path]
+    if rec.dream_team is not None:
+        dream_path = out / "dream_team.json"
+        dream_path.write_text(rec.dream_team.model_dump_json(indent=2))
+        written.append(dream_path)
+    curves = captured.get("curves")
+    if curves is not None and len(curves):
+        curves_path = out / "chip_curves.parquet"
+        curves.to_parquet(curves_path, index=False)
+        written.append(curves_path)
+
+    _print_verdict(rec, prices)
+    console.print(
+        "[bold]optimize[/bold]: wrote " + ", ".join(str(p) for p in written)
+    )
+    return rec
+
+
+# ---------------------------------------------------------------------------
+# backtest (stage 4 harness)
+# ---------------------------------------------------------------------------
+
+
+def run_backtest(season: int, gws: Sequence[int] | None = None) -> Any:
+    """Run the stage-4 walk-forward backtest harness over one season.
+
+    Thin wrapper around ``fplai.backtest.harness.run(season=..., gws=...)`` —
+    the documented stage-4 contract (per-GW walk-forward loop with squad-state
+    rolling and season-points policy eval).  The harness module is built by the
+    backtest task; until it lands this raises a clear error instead of an
+    ImportError traceback.
+
+    Args:
+        season: Season start year to backtest (e.g. 2025).
+        gws: Optional GW subset (default: the harness's full-season default).
+
+    Raises:
+        RuntimeError: when ``fplai.backtest.harness`` is not available yet.
+    """
+    try:
+        from fplai.backtest import harness
+    except ImportError as exc:
+        raise RuntimeError(
+            "the backtest harness (fplai.backtest.harness) is not available yet — "
+            "stage 4 is pending; see docs/ARCHITECTURE.md. "
+            f"(import error: {exc})"
+        ) from exc
+    gw_note = f" GWs {list(gws)}" if gws else ""
+    console.print(f"[bold]backtest[/bold]: season {season}{gw_note}")
+    return harness.run(season=season, gws=list(gws) if gws is not None else None)

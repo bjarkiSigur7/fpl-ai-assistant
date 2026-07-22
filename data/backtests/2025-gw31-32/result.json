@@ -1,0 +1,242 @@
+{
+ "season": 2025,
+ "gws": [
+  31,
+  32
+ ],
+ "mode": "coarse-pretrained",
+ "params": {
+  "horizon": 2,
+  "time_limit_s": 10.0,
+  "mip_rel_gap": 0.01,
+  "seed": 0,
+  "use_odds": false,
+  "models_dir": null,
+  "solver_overrides": {},
+  "evaluate_chips": true,
+  "max_chip_solves_per_gw": 2,
+  "chip_play_margin": 1.5,
+  "bb_bench_ev_threshold": 10.0,
+  "tc_captain_xp_threshold": 8.0,
+  "wc_hit_points_trigger": 8,
+  "fh_blank_squad_threshold": 4,
+  "chip_expiry_within": 3,
+  "run_baselines": false,
+  "last5_window": 5
+ },
+ "policies": {
+  "model": {
+   "name": "model",
+   "description": "Weekly re-solve on model xP with the light chip sweep.",
+   "rows": [
+    {
+     "gw": 31,
+     "points": 92,
+     "gross_points": 92,
+     "bench_points": 0,
+     "hit_points": 0,
+     "n_transfers": 0,
+     "transfers_in": [],
+     "transfers_out": [],
+     "chip": "bb2",
+     "bank": 53,
+     "squad_value": 947,
+     "team_value": 1000,
+     "free_transfers": null,
+     "captain": 153682,
+     "vice": 244850,
+     "effective_captain": 153682,
+     "captain_points": 18,
+     "captain_success": false,
+     "autosubs": [],
+     "lineup": [
+      80201,
+      97032,
+      98980,
+      141746,
+      153682,
+      178186,
+      199798,
+      222531,
+      232826,
+      232892,
+      244850,
+      444102,
+      444765,
+      465642,
+      502500
+     ],
+     "squad": [
+      80201,
+      97032,
+      98980,
+      141746,
+      153682,
+      178186,
+      199798,
+      222531,
+      232826,
+      232892,
+      244850,
+      444102,
+      444765,
+      465642,
+      502500
+     ],
+     "expected_points": 76.08641483962919,
+     "solve_seconds": 0.423
+    },
+    {
+     "gw": 32,
+     "points": 100,
+     "gross_points": 100,
+     "bench_points": 8,
+     "hit_points": 0,
+     "n_transfers": 1,
+     "transfers_in": [
+      209036
+     ],
+     "transfers_out": [
+      465642
+     ],
+     "chip": "tc2",
+     "bank": 53,
+     "squad_value": 951,
+     "team_value": 999,
+     "free_transfers": 1,
+     "captain": 178186,
+     "vice": 141746,
+     "effective_captain": 178186,
+     "captain_points": 42,
+     "captain_success": false,
+     "autosubs": [
+      [
+       98980,
+       80201
+      ]
+     ],
+     "lineup": [
+      97032,
+      80201,
+      141746,
+      153682,
+      178186,
+      209036,
+      222531,
+      232826,
+      244850,
+      444765,
+      502500
+     ],
+     "squad": [
+      80201,
+      97032,
+      98980,
+      141746,
+      153682,
+      178186,
+      199798,
+      222531,
+      232826,
+      232892,
+      244850,
+      444102,
+      444765,
+      502500,
+      209036
+     ],
+     "expected_points": 72.24292948111679,
+     "solve_seconds": 1.401
+    }
+   ],
+   "total_points": 192,
+   "total_gross_points": 192,
+   "total_hit_points": 0,
+   "total_transfers": 1,
+   "chips_played": [
+    "bb2",
+    "tc2"
+   ]
+  }
+ },
+ "references": {
+  "average_manager": 2250,
+  "top_10k": 2625
+ },
+ "metrics": {
+  "overall": {
+   "rmse": 1.9066,
+   "mae": 0.8924,
+   "n": 1490
+  },
+  "by_category": {
+   "zeros": {
+    "rmse": 0.818,
+    "mae": 0.3338,
+    "n": 966
+   },
+   "blanks": {
+    "rmse": 1.3151,
+    "mae": 1.0234,
+    "n": 320
+   },
+   "tickers": {
+    "rmse": 1.2945,
+    "mae": 1.0423,
+    "n": 74
+   },
+   "haulers": {
+    "rmse": 5.6808,
+    "mae": 4.6907,
+    "n": 125
+   }
+  },
+  "by_position": {
+   "DEF": {
+    "rmse": 2.1556,
+    "mae": 1.0751,
+    "n": 481
+   },
+   "FWD": {
+    "rmse": 2.2152,
+    "mae": 1.0676,
+    "n": 166
+   },
+   "GKP": {
+    "rmse": 1.5229,
+    "mae": 0.5859,
+    "n": 176
+   },
+   "MID": {
+    "rmse": 1.7137,
+    "mae": 0.7979,
+    "n": 667
+   }
+  },
+  "spearman_within_gw": 0.7262,
+  "mean_xp": 1.0707,
+  "mean_points": 1.1027
+ },
+ "leakage_warnings": [
+  "horizon look-ahead: xP rows for GWs t+1..t+H-1 inside each decision are built from matches before their own GW, not before GW t (planning-only peek; the scored GW is strictly pre-deadline — see module docstring)",
+  "LEAKY ARTIFACTS: manifest train_window {'seasons': [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025], 'before_season': None, 'before_gw': None, 'n_feature_rows': 253568, 'n_team_matches': 3800} overlaps the backtest (2025 GW31+). Season points are optimistic — retrain with `fplai train --before-season 2025 --before-gw 31` (§7.2 trap 5)."
+ ],
+ "artifact_train_window": {
+  "seasons": [
+   2016,
+   2017,
+   2018,
+   2019,
+   2020,
+   2021,
+   2022,
+   2023,
+   2024,
+   2025
+  ],
+  "before_season": null,
+  "before_gw": null,
+  "n_feature_rows": 253568,
+  "n_team_matches": 3800
+ }
+}

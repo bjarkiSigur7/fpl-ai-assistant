@@ -154,9 +154,10 @@ def test_run_refresh_predicts_when_artifacts_exist(
     (models / "manifest.json").write_text("{}")
     monkeypatch.setattr(config, "MODELS_DIR", models)
     monkeypatch.setattr(pipeline, "run_predict", lambda: order.append("predict"))
+    monkeypatch.setattr(pipeline, "run_optimize", lambda: order.append("optimize"))
 
     pipeline.run_refresh()
-    assert order == ["predict"]
+    assert order == ["predict", "optimize"]
 
 
 def test_run_refresh_stays_exit_zero_when_predict_fails(
@@ -176,6 +177,7 @@ def test_run_refresh_stays_exit_zero_when_predict_fails(
         raise RuntimeError("predict blew up")
 
     monkeypatch.setattr(pipeline, "run_predict", boom)
+    monkeypatch.setattr(pipeline, "run_optimize", lambda: None)
     pipeline.run_refresh()  # must not raise
     assert "predict blew up" in capsys.readouterr().out
 
