@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+*.tsbuildinfo
+npm-debug.log*
+
+# Data & model artifacts (large, regenerable)
+data/raw/
+data/processed/
+data/models/
+data/cache/
+*.parquet
+*.duckdb
+
+# Secrets & local config
+.env
+.env.local
+*.local.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
