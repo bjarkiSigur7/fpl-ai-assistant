@@ -303,7 +303,10 @@ def _formation(lineup: Sequence[int], positions: Mapping[int, str]) -> str | Non
     if not lineup or any(code not in positions for code in lineup):
         return None
     counts = Counter(positions[code] for code in lineup)
-    return f"{counts.get('DEF', 0)}-{counts.get('MID', 0)}-{counts.get('FWD', 0)}"
+    formation = f"{counts.get('DEF', 0)}-{counts.get('MID', 0)}-{counts.get('FWD', 0)}"
+    if len(lineup) == 15:  # Bench Boost week: all 15 count, an XI formation would mislead
+        return f"BB · {formation}"
+    return formation
 
 
 def _chip_name(chip_id: str) -> str:

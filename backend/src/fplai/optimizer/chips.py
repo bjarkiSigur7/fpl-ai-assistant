@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from fplai import rules
+from fplai.optimizer.milp import InfeasiblePlanError
 
 #: Attribute on the params object carrying ``{gw: chip_id}`` forced-chip directives.
 FORCED_CHIPS_FIELD: str = "forced_chips"
@@ -278,6 +279,10 @@ def chip_ev_curves(
                 row["skip_reason"] = "outside_horizon"
             elif g in skip_gws:
                 row["skip_reason"] = skip_gws[g]
+            elif state is None and g == current_gw and chip[:2] in ("wc", "fh"):
+                # Transfer chips at the first GW of a None-state initial build are
+                # degenerate and refused by the MILP — don't even attempt the force.
+                row["skip_reason"] = "initial_build_first_gw"
             else:
                 forced_params = copy_params_with(
                     params,
@@ -286,10 +291,16 @@ def chip_ev_curves(
                         BANNED_CHIPS_FIELD: frozenset(all_chip_ids - {chip}),
                     },
                 )
-                result = solver(xp, prices, state, horizon=horizon, params=forced_params)
-                row["objective"] = float(result.objective)
-                row["delta_vs_no_chip"] = float(result.objective) - baseline_obj
-                row["evaluated"] = True
+                try:
+                    result = solver(xp, prices, state, horizon=horizon, params=forced_params)
+                except InfeasiblePlanError as exc:
+                    # A force the model refuses (window/state conflicts) is a skipped
+                    # cell, not a crashed sweep.
+                    row["skip_reason"] = f"infeasible: {exc}"
+                else:
+                    row["objective"] = float(result.objective)
+                    row["delta_vs_no_chip"] = float(result.objective) - baseline_obj
+                    row["evaluated"] = True
             chip_rows.append(row)
 
         near_expiry = (window.last_gw - current_gw <= expiry_proximity) or (

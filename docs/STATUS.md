@@ -71,7 +71,13 @@ true pre-launch) it falls back loudly to the initial-squad demo.
 
 ### Current demo verdict (2025-26 GW34, horizon 5, full chips+stability)
 
-<!-- DEMO-VERDICT -->
+Initial-squad build: 15 players, £99.9m spent, expected **78.8 xP in GW34**
+(Bench Boost played), captain M.Salah. Top draft bullets: Virgil (+18.1 xP over the
+horizon, 100% stability), B.Fernandes (+31.0, 93%), Bowen (+24.6, 100%). Chip
+verdicts: bb2 play GW34 (sweep best GW35 +9.3), tc2 hold for GW36 (+12.0), wc2 hold
+for GW35 (+11.3), fh2 hold for GW36 (+11.5). Artifacts: `recommendation.json`,
+`dream_team.json`, `chip_curves.parquet` in `data/processed/`. (End-of-season demo
+window — chips cluster because they expire at GW38; a real GW1 plan spreads them.)
 
 ## Real end-to-end verification (2026-07-22, retrained artifacts)
 
