@@ -1,0 +1,86 @@
+[
+  {
+    "id": "e912304de2b2ce35b473ce2ecd3d1502",
+    "sport_key": "soccer_epl",
+    "sport_title": "EPL",
+    "commence_time": "2026-08-15T14:00:00Z",
+    "home_team": "Arsenal",
+    "away_team": "Chelsea",
+    "bookmakers": [
+      {
+        "key": "williamhill",
+        "title": "William Hill",
+        "last_update": "2026-08-15T08:41:50Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-08-15T08:41:50Z",
+            "outcomes": [
+              {"name": "Arsenal", "price": 1.7},
+              {"name": "Chelsea", "price": 4.6},
+              {"name": "Draw", "price": 3.9}
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2026-08-15T08:41:50Z",
+            "outcomes": [
+              {"name": "Over", "price": 1.83, "point": 2.5},
+              {"name": "Under", "price": 1.99, "point": 2.5}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "paddypower",
+        "title": "Paddy Power",
+        "last_update": "2026-08-15T08:40:09Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-08-15T08:40:09Z",
+            "outcomes": [
+              {"name": "Arsenal", "price": 1.73},
+              {"name": "Chelsea", "price": 4.5},
+              {"name": "Draw", "price": 3.8}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "0f0576f3b81c1e8d55e75d0a03105c99",
+    "sport_key": "soccer_epl",
+    "sport_title": "EPL",
+    "commence_time": "2026-08-15T16:30:00Z",
+    "home_team": "Manchester City",
+    "away_team": "Liverpool",
+    "bookmakers": [
+      {
+        "key": "skybet",
+        "title": "Sky Bet",
+        "last_update": "2026-08-15T08:41:30Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-08-15T08:41:30Z",
+            "outcomes": [
+              {"name": "Manchester City", "price": 2.2},
+              {"name": "Liverpool", "price": 3.1},
+              {"name": "Draw", "price": 3.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2026-08-15T08:41:30Z",
+            "outcomes": [
+              {"name": "Over", "price": 1.62, "point": 2.5},
+              {"name": "Under", "price": 2.3, "point": 2.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

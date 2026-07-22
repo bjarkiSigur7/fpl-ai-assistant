@@ -1,0 +1,3 @@
+code,event,finished,finished_provisional,id,kickoff_time,minutes,provisional_start_time,started,stats,team_a,team_a_difficulty,team_a_score,team_h,team_h_difficulty,team_h_score
+1059800,29,True,True,100,2020-03-07T15:00:00Z,90,False,True,[],2,2,1,1,3,2
+1059900,39,True,True,200,2020-06-20T15:00:00Z,90,False,True,[],1,3,0,2,2,0

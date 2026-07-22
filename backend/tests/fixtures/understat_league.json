@@ -1,0 +1,272 @@
+{
+ "teams": {
+  "71": {
+   "id": "71",
+   "title": "Aston Villa",
+   "history": [
+    {
+     "h_a": "h",
+     "xG": 0.318601,
+     "xGA": 1.40098,
+     "npxG": 0.318601,
+     "npxGA": 1.40098,
+     "ppda": {
+      "att": 227,
+      "def": 12
+     },
+     "ppda_allowed": {
+      "att": 146,
+      "def": 24
+     },
+     "deep": 2,
+     "deep_allowed": 6,
+     "scored": 0,
+     "missed": 0,
+     "xpts": 0.42579999999999996,
+     "result": "d",
+     "date": "2025-08-16 11:30:00",
+     "wins": 0,
+     "draws": 1,
+     "loses": 0,
+     "pts": 1,
+     "npxGD": -1.082379
+    },
+    {
+     "h_a": "a",
+     "xG": 0.976852,
+     "xGA": 1.12964,
+     "npxG": 0.976852,
+     "npxGA": 1.12964,
+     "ppda": {
+      "att": 92,
+      "def": 17
+     },
+     "ppda_allowed": {
+      "att": 302,
+      "def": 28
+     },
+     "deep": 14,
+     "deep_allowed": 2,
+     "scored": 0,
+     "missed": 1,
+     "xpts": 1.1286999999999998,
+     "result": "l",
+     "date": "2025-08-23 14:00:00",
+     "wins": 0,
+     "draws": 0,
+     "loses": 1,
+     "pts": 0,
+     "npxGD": -0.15278799999999992
+    }
+   ]
+  },
+  "72": {
+   "id": "72",
+   "title": "Everton",
+   "history": [
+    {
+     "h_a": "a",
+     "xG": 0.674338,
+     "xGA": 2.3812,
+     "npxG": 0.674338,
+     "npxGA": 1.62003,
+     "ppda": {
+      "att": 275,
+      "def": 10
+     },
+     "ppda_allowed": {
+      "att": 251,
+      "def": 16
+     },
+     "deep": 2,
+     "deep_allowed": 5,
+     "scored": 0,
+     "missed": 1,
+     "xpts": 0.2864,
+     "result": "l",
+     "date": "2025-08-18 19:00:00",
+     "wins": 0,
+     "draws": 0,
+     "loses": 1,
+     "pts": 0,
+     "npxGD": -0.9456920000000001
+    },
+    {
+     "h_a": "h",
+     "xG": 1.80116,
+     "xGA": 2.08487,
+     "npxG": 1.80116,
+     "npxGA": 1.3237,
+     "ppda": {
+      "att": 301,
+      "def": 17
+     },
+     "ppda_allowed": {
+      "att": 165,
+      "def": 19
+     },
+     "deep": 5,
+     "deep_allowed": 8,
+     "scored": 2,
+     "missed": 0,
+     "xpts": 1.1070000000000002,
+     "result": "w",
+     "date": "2025-08-24 13:00:00",
+     "wins": 1,
+     "draws": 0,
+     "loses": 0,
+     "pts": 3,
+     "npxGD": 0.47746
+    }
+   ]
+  }
+ },
+ "players": [
+  {
+   "id": "8260",
+   "player_name": "Erling Haaland",
+   "games": "35",
+   "time": "2979",
+   "goals": "27",
+   "xG": "28.795336209237576",
+   "assists": "8",
+   "xA": "5.507687093690038",
+   "shots": "125",
+   "key_passes": "25",
+   "yellow_cards": "2",
+   "red_cards": "0",
+   "position": "F S",
+   "team_title": "Manchester City",
+   "npg": "24",
+   "npxG": "25.7506607696414",
+   "xGChain": "32.735352732241154",
+   "xGBuildup": "5.163548586890101"
+  },
+  {
+   "id": "13222",
+   "player_name": "Thiago",
+   "games": "38",
+   "time": "3292",
+   "goals": "22",
+   "xG": "24.68977300822735",
+   "assists": "1",
+   "xA": "3.4500465877354145",
+   "shots": "84",
+   "key_passes": "24",
+   "yellow_cards": "7",
+   "red_cards": "0",
+   "position": "F S",
+   "team_title": "Brentford",
+   "npg": "14",
+   "npxG": "17.83925338834524",
+   "xGChain": "22.693457752466202",
+   "xGBuildup": "4.9276386722922325"
+  },
+  {
+   "id": "11363",
+   "player_name": "Antoine Semenyo",
+   "games": "37",
+   "time": "3220",
+   "goals": "17",
+   "xG": "12.836786897853017",
+   "assists": "4",
+   "xA": "4.130169393494725",
+   "shots": "83",
+   "key_passes": "38",
+   "yellow_cards": "7",
+   "red_cards": "0",
+   "position": "F M",
+   "team_title": "Bournemouth,Manchester City",
+   "npg": "16",
+   "npxG": "11.31444920040667",
+   "xGChain": "20.870588455349207",
+   "xGBuildup": "7.893717190250754"
+  }
+ ],
+ "dates": [
+  {
+   "id": "29133",
+   "isResult": true,
+   "h": {
+    "id": "88",
+    "title": "Manchester City",
+    "short_title": "MCI"
+   },
+   "a": {
+    "id": "244",
+    "title": "Brentford",
+    "short_title": "BRE"
+   },
+   "goals": {
+    "h": "3",
+    "a": "0"
+   },
+   "xG": {
+    "h": "4.37429",
+    "a": "0.670038"
+   },
+   "datetime": "2026-05-09 17:30:00",
+   "forecast": {
+    "w": "0.9871",
+    "d": "0.0121",
+    "l": "0.0008"
+   }
+  },
+  {
+   "id": "29138",
+   "isResult": true,
+   "h": {
+    "id": "73",
+    "title": "Bournemouth",
+    "short_title": "BOU"
+   },
+   "a": {
+    "id": "88",
+    "title": "Manchester City",
+    "short_title": "MCI"
+   },
+   "goals": {
+    "h": "1",
+    "a": "1"
+   },
+   "xG": {
+    "h": "1.71486",
+    "a": "1.26917"
+   },
+   "datetime": "2026-05-19 19:30:00",
+   "forecast": {
+    "w": "0.4866",
+    "d": "0.2553",
+    "l": "0.2581"
+   }
+  },
+  {
+   "id": "28778",
+   "isResult": true,
+   "h": {
+    "id": "87",
+    "title": "Liverpool",
+    "short_title": "LIV"
+   },
+   "a": {
+    "id": "73",
+    "title": "Bournemouth",
+    "short_title": "BOU"
+   },
+   "goals": {
+    "h": "4",
+    "a": "2"
+   },
+   "xG": {
+    "h": "2.33007",
+    "a": "1.57303"
+   },
+   "datetime": "2025-08-15 19:00:00",
+   "forecast": {
+    "w": "0.5498",
+    "d": "0.2276",
+    "l": "0.2226"
+   }
+  }
+ ]
+}

@@ -1,0 +1,133 @@
+{
+ "player": {
+  "id": "8260",
+  "name": "Erling Haaland",
+  "favorite_position": "FW"
+ },
+ "matches": [
+  {
+   "goals": "1",
+   "shots": "2",
+   "xG": "0.1569846272468567",
+   "time": "90",
+   "position": "FW",
+   "h_team": "Bournemouth",
+   "a_team": "Manchester City",
+   "h_goals": "1",
+   "a_goals": "1",
+   "date": "2026-05-19",
+   "id": "29138",
+   "season": "2025",
+   "roster_id": "792361",
+   "xA": "0.44766804575920105",
+   "assists": "0",
+   "key_passes": "1",
+   "npg": "1",
+   "npxG": "0.1569846272468567",
+   "xGChain": "0.5119515657424927",
+   "xGBuildup": "0"
+  },
+  {
+   "goals": "1",
+   "shots": "5",
+   "xG": "2.2928519248962402",
+   "time": "90",
+   "position": "FW",
+   "h_team": "Manchester City",
+   "a_team": "Brentford",
+   "h_goals": "3",
+   "a_goals": "0",
+   "date": "2026-05-09",
+   "id": "29133",
+   "season": "2025",
+   "roster_id": "788935",
+   "xA": "0.20362892746925354",
+   "assists": "1",
+   "key_passes": "2",
+   "npg": "1",
+   "npxG": "2.2928519248962402",
+   "xGChain": "2.341719388961792",
+   "xGBuildup": "0"
+  },
+  {
+   "goals": "1",
+   "shots": "4",
+   "xG": "0.9217206239700317",
+   "time": "86",
+   "position": "FW",
+   "h_team": "Fulham",
+   "a_team": "Manchester City",
+   "h_goals": "0",
+   "a_goals": "2",
+   "date": "2025-05-25",
+   "id": "26981",
+   "season": "2024",
+   "roster_id": "730213",
+   "xA": "0.09385798871517181",
+   "assists": "0",
+   "key_passes": "1",
+   "npg": "0",
+   "npxG": "0.1605517864227295",
+   "xGChain": "0.34762975573539734",
+   "xGBuildup": "0.21833868324756622"
+  }
+ ],
+ "groups": {
+  "season": [
+   {
+    "position": "FW",
+    "games": "35",
+    "goals": "27",
+    "shots": "125",
+    "time": "2979",
+    "xG": "28.795336209237576",
+    "assists": "8",
+    "xA": "5.507687093690038",
+    "key_passes": "25",
+    "season": "2025",
+    "team": "Manchester City",
+    "yellow": "2",
+    "red": "0",
+    "npg": "24",
+    "npxG": "25.7506607696414",
+    "xGChain": "32.735352732241154",
+    "xGBuildup": "5.163548586890101"
+   }
+  ]
+ },
+ "positionsList": [
+  "GK",
+  "DR",
+  "DC"
+ ],
+ "minMaxPlayerStats": {},
+ "shots": [
+  {
+   "id": "354876",
+   "minute": "58",
+   "result": "Goal",
+   "X": "0.8880000305175781",
+   "Y": "0.6659999847412109",
+   "xG": "0.07933320105075836",
+   "player": "Erling Haaland",
+   "h_a": "a",
+   "player_id": "8260",
+   "situation": "OpenPlay",
+   "season": "2019",
+   "shotType": "LeftFoot",
+   "match_id": "12562",
+   "h_team": "Augsburg",
+   "a_team": "Borussia Dortmund",
+   "h_goals": "3",
+   "a_goals": "5",
+   "date": "2020-01-18 14:30:00",
+   "player_assisted": "Jadon Sancho",
+   "lastAction": "Throughball"
+  }
+ ],
+ "lastMatch": {
+  "league": "EPL",
+  "team": "Manchester City",
+  "season": "2025"
+ }
+}

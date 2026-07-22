@@ -45,3 +45,6 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: hits real network services (deselected by default; run with -m live)",
+]
