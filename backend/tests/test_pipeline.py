@@ -119,21 +119,65 @@ def test_run_build_builds_odds_for_available_seasons_only(
 
 
 def test_run_refresh_sequences_and_does_not_exit_nonzero(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
+    from fplai import config
+
     order: list[str] = []
     monkeypatch.setattr(
         pipeline, "run_snapshot", lambda: order.append("snapshot") or _state(next_gw=None)
     )
     monkeypatch.setattr(pipeline, "_refresh_pulls", lambda state: order.append("pulls"))
     monkeypatch.setattr(pipeline, "run_build", lambda: order.append("build") or {})
+    monkeypatch.setattr(config, "MODELS_DIR", tmp_path / "models")  # no manifest -> skip
 
     pipeline.run_refresh()  # must not raise SystemExit
 
     assert order == ["snapshot", "pulls", "build"]
     out = capsys.readouterr().out
     for stage in ("train", "predict", "optimize"):
-        assert f"{stage}" in out and "not yet implemented" in out
+        assert f"{stage}" in out
+    assert "skip" in out  # model stages degrade without artifacts
+
+
+def test_run_refresh_predicts_when_artifacts_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from fplai import config
+
+    order: list[str] = []
+    monkeypatch.setattr(pipeline, "run_snapshot", lambda: _state(next_gw=None))
+    monkeypatch.setattr(pipeline, "_refresh_pulls", lambda state: None)
+    monkeypatch.setattr(pipeline, "run_build", lambda: {})
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "manifest.json").write_text("{}")
+    monkeypatch.setattr(config, "MODELS_DIR", models)
+    monkeypatch.setattr(pipeline, "run_predict", lambda: order.append("predict"))
+
+    pipeline.run_refresh()
+    assert order == ["predict"]
+
+
+def test_run_refresh_stays_exit_zero_when_predict_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from fplai import config
+
+    monkeypatch.setattr(pipeline, "run_snapshot", lambda: _state(next_gw=None))
+    monkeypatch.setattr(pipeline, "_refresh_pulls", lambda state: None)
+    monkeypatch.setattr(pipeline, "run_build", lambda: {})
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "manifest.json").write_text("{}")
+    monkeypatch.setattr(config, "MODELS_DIR", models)
+
+    def boom() -> None:
+        raise RuntimeError("predict blew up")
+
+    monkeypatch.setattr(pipeline, "run_predict", boom)
+    pipeline.run_refresh()  # must not raise
+    assert "predict blew up" in capsys.readouterr().out
 
 
 def test_refresh_pulls_survive_aux_source_failures(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -222,15 +266,241 @@ def test_cli_bad_seasons_spec_is_a_usage_error(monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code != 0
 
 
-def test_cli_refresh_exit_zero_with_stub_model_stages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_refresh_exit_zero_without_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from fplai import config
+
     monkeypatch.setattr(pipeline, "run_snapshot", lambda: _state(next_gw=None))
     monkeypatch.setattr(pipeline, "_refresh_pulls", lambda state: None)
     monkeypatch.setattr(pipeline, "run_build", lambda: {})
+    monkeypatch.setattr(config, "MODELS_DIR", tmp_path / "models")
     result = runner.invoke(app, ["refresh"])
     assert result.exit_code == 0
-    assert "not yet implemented" in result.output
+    assert "skip" in result.output
 
 
-def test_cli_train_stub_exits_nonzero() -> None:
-    result = runner.invoke(app, ["train"])
-    assert result.exit_code == 1
+def test_cli_train_passes_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(
+        pipeline,
+        "run_train",
+        lambda seasons, before_season=None, before_gw=None: seen.append(
+            (seasons, before_season, before_gw)
+        ),
+    )
+    result = runner.invoke(
+        app,
+        ["train", "--seasons", "2024..2025", "--before-season", "2025", "--before-gw", "30"],
+    )
+    assert result.exit_code == 0
+    assert seen == [([2024, 2025], 2025, 30)]
+
+
+def test_cli_train_rejects_before_gw_without_before_season() -> None:
+    result = runner.invoke(app, ["train", "--before-gw", "30"])
+    assert result.exit_code != 0
+
+
+def test_cli_predict_passes_backtest_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(
+        pipeline,
+        "run_predict",
+        lambda season=None, gw=None, horizon=None, use_odds=True: seen.append(
+            (season, gw, horizon, use_odds)
+        ),
+    )
+    result = runner.invoke(
+        app, ["predict", "--season", "2025", "--gw", "30", "--horizon", "9", "--no-odds"]
+    )
+    assert result.exit_code == 0
+    assert seen == [(2025, 30, 9, False)]
+
+
+def test_cli_predict_rejects_gw_without_season() -> None:
+    result = runner.invoke(app, ["predict", "--gw", "30"])
+    assert result.exit_code != 0
+
+
+def test_run_predict_rejects_half_specified_backtest() -> None:
+    with pytest.raises(ValueError, match="together"):
+        pipeline.run_predict(2025, None)
+
+
+# ---------------------------------------------------------------------------
+# model-stage helpers
+# ---------------------------------------------------------------------------
+
+
+def test_cutoff_mask_strictly_before() -> None:
+    df = pd.DataFrame({"season": [2024, 2025, 2025, 2025], "gw": [38, 29, 30, 31]})
+    assert pipeline._cutoff_mask(df, None, None).all()
+    assert pipeline._cutoff_mask(df, 2025, None).tolist() == [True, False, False, False]
+    assert pipeline._cutoff_mask(df, 2025, 30).tolist() == [True, True, False, False]
+
+
+def test_team_train_end_is_first_excluded_kickoff() -> None:
+    fx = pd.DataFrame(
+        {
+            "season": [2025, 2025, 2025],
+            "gw": [29, 30, 31],
+            "kickoff_utc": pd.to_datetime(
+                ["2026-03-01", "2026-03-08", "2026-03-15"], utc=True
+            ),
+        }
+    )
+    assert pipeline._team_train_end(fx, 2025, 30) == pd.Timestamp("2026-03-08", tz="UTC")
+    assert pipeline._team_train_end(fx, None, None) is None
+    assert pipeline._team_train_end(fx, 2026, None) is None
+
+
+def _mini_player_match() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "season": [2025, 2025, 2025, 2024],
+            "gw": [37, 38, 38, 38],
+            "fpl_fixture_id": [370, 380, 380, 999],
+            "player_code": [1, 1, 2, 3],
+            "fpl_element_id": [11, 11, 22, 33],
+            "team_code": [100, 100, 200, 300],
+            "opponent_code": [200, 200, 100, 100],
+            "was_home": [True, True, False, True],
+            "position": ["MID", "MID", "DEF", "FWD"],
+            "price": [80, 81, 45, 60],
+            "minutes": [90, 90, 60, 45],
+            "starts": [1, 1, 1, 0],
+            "empty_stadium": [False] * 4,
+            "void_gw": [False] * 4,
+            "subs_regime": [5] * 4,
+            "stint_id": [0] * 4,
+        }
+    )
+
+
+def test_future_player_match_rolls_rosters_forward() -> None:
+    pm = _mini_player_match()
+    target = pd.DataFrame(
+        {
+            "season": [2026],
+            "gw": [1],
+            "fpl_fixture_id": [1],
+            "home_team_code": [100],
+            "away_team_code": [200],
+        }
+    )
+    synth = pipeline._future_player_match(pm, target)
+    assert set(synth["player_code"]) == {1, 2}  # player 3's team is not playing
+    assert list(synth.columns) == list(pm.columns)
+    row1 = synth[synth["player_code"] == 1].iloc[0]
+    assert row1["season"] == 2026 and row1["gw"] == 1 and row1["fpl_fixture_id"] == 1
+    assert row1["price"] == 81 and bool(row1["was_home"])  # latest row rolls forward
+    assert pd.isna(row1["minutes"])  # outcomes unknown
+    row2 = synth[synth["player_code"] == 2].iloc[0]
+    assert not bool(row2["was_home"]) and row2["opponent_code"] == 100
+
+
+def test_future_player_match_drops_long_departed_players() -> None:
+    pm = _mini_player_match()
+    target = pd.DataFrame(
+        {
+            "season": [2026],
+            "gw": [1],
+            "fpl_fixture_id": [2],
+            "home_team_code": [300],
+            "away_team_code": [200],
+        }
+    )
+    synth = pipeline._future_player_match(pm, target)
+    # player 3 last seen 2024 < 2026-1 -> excluded; team 300 has no roster.
+    assert set(synth["player_code"]) == {2}
+
+
+def test_run_predict_live_mode_degrades_without_upcoming_fixtures(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fixtures = pd.DataFrame(
+        {
+            "season": [2025],
+            "gw": [38],
+            "fpl_fixture_id": [380],
+            "kickoff_utc": pd.to_datetime(["2026-05-24"], utc=True),
+            "home_team_code": [100],
+            "away_team_code": [200],
+            "home_goals": [1.0],
+            "away_goals": [0.0],
+            "finished": [True],
+            "void": [False],
+        }
+    )
+    monkeypatch.setattr(
+        pipeline, "load_processed_tables", lambda processed_dir=None: {"fixtures": fixtures}
+    )
+    assert pipeline.run_predict() is None
+    assert "no upcoming fixtures" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# train + predict end-to-end on real processed data (auto-skips without data)
+# ---------------------------------------------------------------------------
+
+_PM_PATH = Path(__file__).resolve().parents[2] / "data" / "processed" / "player_match.parquet"
+
+
+@pytest.mark.skipif(not _PM_PATH.exists(), reason="processed tables not built")
+def test_train_predict_roundtrip_on_real_data(tmp_path: Path) -> None:
+    from fplai.models.assemble import COMPONENT_COLUMNS, XP_COLUMNS
+
+    manifest = pipeline.run_train([2024, 2025], models_dir=tmp_path / "models")
+    assert manifest["train_window"]["seasons"] == [2024, 2025]
+    assert (tmp_path / "models" / "manifest.json").exists()
+
+    paths = pipeline.run_predict(
+        2025, 37, horizon=2, models_dir=tmp_path / "models", out_dir=tmp_path / "out"
+    )
+    assert paths is not None
+    pred = pd.read_parquet(paths["predictions"])
+    gw_pred = pd.read_parquet(paths["predictions_gw"])
+    assert set(XP_COLUMNS) <= set(pred.columns)
+    assert {"q0", "q1", "q2", "mu1", "mu2", "position", "price"} <= set(pred.columns)
+    assert sorted(pred["gw"].unique()) == [37, 38]
+    # components sum to xp; probabilities proper
+    comp_sum = pred[list(COMPONENT_COLUMNS)].sum(axis=1)
+    assert (comp_sum - pred["xp"]).abs().max() < 1e-6
+    assert ((pred[["q0", "q1", "q2"]].sum(axis=1) - 1).abs() < 1e-6).all()
+    # per-GW aggregation covers the same players
+    assert {"xp", "q0", "web_name", "n_fixtures"} <= set(gw_pred.columns)
+    assert len(gw_pred) == pred.groupby(["season", "gw", "player_code"]).ngroups
+    # a mid-table xp sanity band: best player of a normal GW sits in ~[4, 20]
+    best = gw_pred[gw_pred["gw"] == 37]["xp"].max()
+    assert 4.0 < best < 25.0
+
+
+@pytest.mark.skipif(not _PM_PATH.exists(), reason="processed tables not built")
+def test_predict_live_mode_synthesizes_upcoming_fixtures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulate an in-season state: GW38 2025 not yet played -> live predict covers it."""
+    pipeline.run_train([2024, 2025], before_season=2025, before_gw=38,
+                       models_dir=tmp_path / "models")
+
+    tables = pipeline.load_processed_tables()
+    fx = tables["fixtures"].copy()
+    mask = (fx["season"] == 2025) & (fx["gw"] == 38)
+    assert mask.any()
+    fx.loc[mask, "finished"] = False
+    fx.loc[mask, ["home_goals", "away_goals"]] = pd.NA
+    fx.loc[mask, "kickoff_utc"] = pd.Timestamp.now(tz="UTC") + pd.Timedelta("7D")
+    pm = tables["player_match"]
+    tables["fixtures"] = fx
+    tables["player_match"] = pm[~((pm["season"] == 2025) & (pm["gw"] == 38))].copy()
+    monkeypatch.setattr(pipeline, "load_processed_tables", lambda processed_dir=None: tables)
+
+    paths = pipeline.run_predict(models_dir=tmp_path / "models", out_dir=tmp_path / "out")
+    assert paths is not None
+    pred = pd.read_parquet(paths["predictions"])
+    assert (pred["season"] == 2025).all() and (pred["gw"] == 38).all()
+    assert len(pred) > 400  # both squads of all 10 fixtures
+    assert pred["xp"].between(-2, 25).all()
+    # the synthesized pool must rank plausibly: xp correlates with price
+    assert pred["xp"].corr(pred["price"].astype(float)) > 0.3

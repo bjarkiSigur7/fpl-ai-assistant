@@ -565,5 +565,12 @@ def build_all(
     paths["player_gw"] = processed / "player_gw.parquet"
     build_player_gw(player_match=pm, out_path=paths["player_gw"])
 
+    # Post-build enrichment (identity joins: understat ids + us_* stats, team aux
+    # names, odds fixture ids).  Offline, idempotent, partial-season safe — it uses
+    # whatever raw understat/football-data files exist and leaves the rest NA.
+    from fplai.data import enrich  # deferred: avoids a module-import cycle
+
+    enrich.enrich_all(processed_dir=processed, raw_root=raw_root)
+
     logger.info("build_all complete: %s", ", ".join(str(p) for p in paths.values()))
     return paths

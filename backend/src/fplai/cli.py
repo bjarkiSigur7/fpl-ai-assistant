@@ -65,19 +65,53 @@ def refresh() -> None:
 
 
 @app.command()
-def train() -> None:
-    """Retrain all models on the full historical dataset."""
+def train(
+    seasons: SeasonsOpt = None,
+    before_season: Annotated[
+        int | None,
+        typer.Option(
+            help="Walk-forward cutoff: train strictly before this season "
+            "(with --before-gw: before that GW of this season)."
+        ),
+    ] = None,
+    before_gw: Annotated[
+        int | None,
+        typer.Option(help="Walk-forward cutoff GW within --before-season."),
+    ] = None,
+) -> None:
+    """Retrain all models on the full historical dataset and save artifacts."""
     from fplai.pipeline import run_train
 
-    run_train()
+    if before_gw is not None and before_season is None:
+        raise typer.BadParameter("--before-gw requires --before-season")
+    run_train(
+        _parse_seasons_opt(seasons), before_season=before_season, before_gw=before_gw
+    )
 
 
 @app.command()
-def predict() -> None:
-    """Generate expected-points predictions for upcoming gameweeks."""
+def predict(
+    season: Annotated[
+        int | None,
+        typer.Option(help="Backtest mode: season start year of the first GW to predict."),
+    ] = None,
+    gw: Annotated[
+        int | None,
+        typer.Option(help="Backtest mode: first GW to predict (needs --season)."),
+    ] = None,
+    horizon: Annotated[
+        int | None, typer.Option(help="Number of GWs to predict (default: settings).")
+    ] = None,
+    no_odds: Annotated[
+        bool, typer.Option("--no-odds", help="Skip the bookmaker-odds blend.")
+    ] = False,
+) -> None:
+    """Generate expected-points predictions (live fixtures, or --season/--gw backtest)."""
     from fplai.pipeline import run_predict
 
-    run_predict()
+    if (season is None) != (gw is None):
+        raise typer.BadParameter("--season and --gw must be given together")
+    run_predict(season, gw, horizon=horizon, use_odds=not no_odds)
 
 
 @app.command()

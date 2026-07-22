@@ -104,6 +104,112 @@ joined to `fpl_fixture_id` when resolvable.
 - All HTTP goes through a shared throttled fetch helper in `fpl_api.py`
   (`polite_get(url, *, min_interval_s, cache_ttl_s)`) — reused by every data client.
 
+## Model layer contracts (stage 2)
+
+All models follow one lifecycle: `Model.fit(...) -> self`, `.predict(...) -> DataFrame`,
+`.save(dir: Path)`, `Model.load(dir) -> Model`. Artifacts under `MODELS_DIR/<component>/`.
+Prediction frames always carry the keys `season, gw, player_code` (player-level) or
+`season, fpl_fixture_id` (fixture-level). All probabilities are proper (sum to 1 where
+applicable); all rates are per-90.
+
+### features/windows.py
+`build_feature_frame(tables: dict[str, DataFrame], *, target: Literal["match","gw"]) -> DataFrame`
+— one row per (player_code, season, gw[, fpl_fixture_id]) with `f_*` feature columns computed
+STRICTLY from information available before that GW's deadline (rows for GW g may only use
+matches with gw < g, plus static/pre-season info). Multi-horizon means/sums over the previous
+1/3/5/10/38 matches per the OpenFPL template (player, team, opponent categories), plus
+days-rest, congestion, venue, promoted-team flags, season-phase, position, price,
+availability (`status`/`chance_of_playing` — nullable pre-2026 where snapshots don't exist).
+Includes the label columns (`minutes`, `total_points`, component outcomes) for training joins.
+Must expose `FEATURE_PREFIX = "f_"` and never leak label-time data into `f_*` columns.
+
+### models/minutes.py
+`MinutesModel.predict(features) -> DataFrame[keys..., q0, q1, q2, mu1, mu2]` where
+q0=P(0 min), q1=P(1-59), q2=P(60+), q0+q1+q2=1; mu1/mu2 = E[minutes | bucket].
+v0 = availability+start-share heuristic (no fit needed); v1 = two-stage LightGBM
+(P(start), P(60+|start), cameo mixture). `.evaluate(features) -> dict` with bucket log-loss.
+
+### models/team.py
+`TeamModel.fit(fixtures, odds)` — Dixon-Coles with exponential time decay (MLE, scipy),
+promoted-team priors seeded per FPL_KNOWLEDGE §3.6, empty-stadium regime flags respected.
+`.predict_fixtures(fixtures) -> DataFrame[season, fpl_fixture_id, home_lambda, away_lambda,
+p_cs_home, p_cs_away, p_home_win, p_draw, p_away_win]` from the scoreline grid (τ-corrected,
+grid to 10 goals). `.blend_odds(pred, odds, weight)` — de-margined odds override/blend where
+markets exist; Dixon-Coles fills the rest.
+
+### models/rates.py
+`RatesModel.predict(features) -> DataFrame[keys..., lam_goal, lam_assist, lam_saves,
+lam_defcon, p_yellow, p_red, lam_og]` — per-90 intensities per player-fixture, LightGBM per
+position for goals/assists (anchored on xG/xA blends × fixture multiplier from TeamModel),
+negative-binomial dispersion parameter `defcon_disp` alongside `lam_defcon`.
+
+### models/bonus.py
+`expected_bonus(event_profile: DataFrame, season: int) -> Series` — E[bonus] per player-fixture
+from expected BPS under that season's BPS version (rules.BPS_2026 / deltas), using an
+empirical mapping E[bonus | expected-BPS rank context within fixture]. Trained on
+rule-adjusted historical BPS (reconstruct v4 BPS for old seasons from raw counts where
+available; document approximations).
+
+### models/assemble.py
+`assemble_xp(minutes, team, rates, features, season) -> DataFrame[season, gw, player_code,
+fpl_fixture_id, xp, xp_appearance, xp_goals, xp_assists, xp_cs, xp_concede, xp_saves,
+xp_defcon, xp_bonus, xp_cards, xp_other]` per FPL_KNOWLEDGE §1.1 maths exactly (position
+scoring from rules.get_scoring, ⌊S/3⌋ and −⌊C/2⌋ via the Poisson grids, DefCon via NB
+threshold, CS conditioned on 60+ bucket). `aggregate_gw(xp) -> DataFrame` sums a player's
+fixtures within a GW (DGWs fall out automatically). This is THE number the optimizer consumes.
+
+## Optimizer contracts (stage 3)
+
+### optimizer/state.py
+`SquadState` (pydantic): `season`, `current_gw` (the next GW to be played), `squad:
+list[OwnedPlayer]` (player_code, purchase_price, current_price — 0.1m units), `bank` (0.1m
+units), `free_transfers` (1-5), `chips_available: list[ChipId]` (e.g. "wc1","fh1","bb1","tc1",
+"wc2",...), `active_chip: ChipId | None` (a WC already active this GW). `None`-state = initial
+squad build: GW1, £1000, unlimited transfers, all 8 chips.
+`from_entry(entry_id)` builds it from the FPL API (public endpoints, post-deadline picks +
+transfers + chips history; document the pre-deadline limitation).
+
+### optimizer/milp.py
+`solve_plan(xp: DataFrame, prices: DataFrame, state: SquadState | None, *, horizon=8,
+params: SolveParams) -> PlanResult` — the multi-GW MILP per MODEL_DESIGN_INPUTS §3
+(HiGHS via highspy; FT big-M state machine per rules; chip binaries respecting
+rules.chip_windows; per-player TC; separate FH squad; sell-price arithmetic; player-pool
+pruning per §3.5; decay/bench-weight/FT-value/ITB-value in `SolveParams` with §3.3 defaults).
+`PlanResult` (pydantic): `objective`, `gws: list[GwPlan]` where GwPlan = gw, squad (codes),
+lineup, bench_order, captain, vice, transfers_in/out, hit_points, chip (ChipId|None),
+expected_points; plus `solve_seconds`, `gap`.
+xp input = assemble contract's `predictions_gw` (season, gw, player_code, xp) + per-player q0
+column for vice weighting; prices input = player_code -> current price + position + team_code
+(club-limit + quota constraints need them).
+
+### optimizer/autosubs.py
+`bench_weights_mc(lineup_q0: Mapping[player_code, float], bench_q0, formation, n=2000, seed)`
+-> per-bench-slot autosub score probabilities via Monte Carlo per MODEL_DESIGN_INPUTS §4;
+used by milp for bench weighting and by plans for reporting.
+
+### optimizer/chips.py + optimizer/sensitivity.py
+`chip_ev_curves(xp, prices, state, chips, gw_range) -> DataFrame[chip, gw, objective, delta_vs_no_chip]`
+(forced-chip re-solves); `plan_stability(xp, prices, state, n=30, strength=1.0, seed) ->
+DataFrame[move, support_pct]` (noise re-solves per §3.4 noise model over this-GW moves).
+
+### optimizer/plans.py
+`build_recommendation(state, xp, prices) -> Recommendation` (pydantic): the weekly verdict —
+`action` ("hold" | "transfer" | "chip:<id>"), `transfers` (in/out pairs with xp deltas),
+`hits`, `captain`, `vice`, `lineup`, `bench_order`, `chip_advice` (play/hold per available
+chip with EV deltas), `dream_team` (the fresh-£100m benchmark squad from a None-state solve),
+`plan` (the full PlanResult), `stability` (from sensitivity), `rationale` (human-readable
+bullet strings, generated from the numbers — no LLM calls).
+
+## API contracts (stage 5 — frontend depends on these)
+
+FastAPI under /api: `GET /health`; `GET /state` (season state, next deadline, data freshness,
+model manifest); `GET /predictions?gw&horizon` (per-player xP + components + q's); `GET
+/dream-team?gw` (benchmark squad); `GET /my-team/{entry_id}` (squad state + Recommendation);
+`GET /players/{player_code}` (identity, history, upcoming fixture xP breakdown); `POST
+/refresh` (runs the refresh pipeline; SSE/polled status at GET /refresh/status); `GET
+/chip-curves?entry_id`. All responses are pydantic models mirroring the optimizer/model
+contracts; frontend consumes these shapes verbatim.
+
 ## Conventions
 
 - Python 3.12, type hints everywhere, dataclasses/pydantic at module boundaries.
