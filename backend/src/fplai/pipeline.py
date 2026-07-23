@@ -8,10 +8,19 @@ Train/predict artifacts live under ``config.MODELS_DIR`` with a
 metrics.  ``run_predict`` supports two modes:
 
 * **live** (default): predict every upcoming fixture in the next ``horizon``
-  gameweeks.  Rows for unplayed fixtures are synthesized from each player's
-  most recent appearance (team/position/price roll forward).  When no upcoming
-  fixtures exist on disk (e.g. between seasons) it degrades gracefully to a
-  message and no output.
+  gameweeks.  With a live 2026-27 snapshot on disk (``data/live.py``), rows
+  for unplayed fixtures are synthesized from the *bootstrap roster* — real
+  squads (promoted teams, summer signings), launch prices, reclassified
+  positions and availability flags — with the live season's fixtures/teams
+  spliced into the processed tables; features come from ALL prior
+  player_match history keyed by ``player_code`` (movers keep their form,
+  their team/opponent context comes from the new club) and unseen codes get
+  the cold-start priors documented in ``fplai.data.live``.  The WC2026
+  fatigue list (GWs 1-4), promoted-team strength seeding, new-manager
+  uncertainty and a cached the-odds-api snapshot are applied on top.
+  Without a live snapshot the legacy roll-forward synthesizer
+  (:func:`_future_player_match`) is used.  When no upcoming fixtures exist on
+  disk it degrades gracefully to a message and no output.
 * **backtest** (``season`` + ``gw`` given): predict historical GWs
   ``gw .. gw+horizon-1`` of ``season`` from strictly-prior information — the
   walk-forward primitive.  Features for each target GW use only matches before
@@ -610,8 +619,27 @@ def _load_artifacts(
     return manifest, minutes_model, team_model, rates_model, calibration
 
 
+def _live_context() -> Any | None:
+    """Best-effort :class:`~fplai.data.live.LiveContext` from the newest snapshot.
+
+    ``None`` when no live (2026-27+) snapshot exists, or when the snapshot is
+    unusable — live predict then falls back to the roll-forward synthesizer
+    with a loud warning rather than taking down the daily refresh.
+    """
+    from fplai.data import live
+
+    try:
+        return live.load_live_context()
+    except Exception as exc:  # noqa: BLE001 - degrade to roll-forward, warned
+        console.print(
+            f"  [yellow]live snapshot unusable ({exc}) — "
+            "falling back to roll-forward rosters[/yellow]"
+        )
+        return None
+
+
 def _future_player_match(pm: pd.DataFrame, target_fx: pd.DataFrame) -> pd.DataFrame:
-    """Synthesize player_match rows for unplayed fixtures (live-mode prediction).
+    """Synthesize player_match rows for unplayed fixtures (roll-forward fallback).
 
     Rosters roll forward from each player's most recent appearance: a player
     belongs to the squad of the team of their latest ``player_match`` row,
@@ -619,6 +647,11 @@ def _future_player_match(pm: pd.DataFrame, target_fx: pd.DataFrame) -> pd.DataFr
     target season or the season before are considered (no resurrecting
     long-departed players).  All outcome columns are NaN — the feature builder
     skips NaNs, so these rows contribute nothing to anyone's history.
+
+    From the 2026-27 relaunch onward the bootstrap-roster synthesizer
+    (:func:`fplai.data.live.bootstrap_player_match`) replaces this for the
+    live season — this path remains for pre-relaunch data and as the fallback
+    when no live snapshot is available.
     """
     import numpy as np
     import pandas as pd
@@ -677,8 +710,15 @@ def _predict_frames(
     tables: dict[str, pd.DataFrame],
     models: tuple[Any, Any, Any, BonusCalibration],
     use_odds: bool,
+    live_adjust: Any | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run minutes/team/rates + assemble over one already-selected feature frame."""
+    """Run minutes/team/rates + assemble over one already-selected feature frame.
+
+    ``live_adjust`` (a :class:`fplai.data.live.LiveAdjustments`) switches the
+    minutes/rates paths to the live policy: WC2026 fatigue dampening on GWs
+    1-4, cold-start priors for unseen player codes and availability gating —
+    see the ``fplai.data.live`` module docstring for the full policy.
+    """
     import numpy as np
     import pandas as pd
 
@@ -696,11 +736,22 @@ def _predict_frames(
         try:
             odds = attach_fixture_ids(tables["odds"], fixtures, tables["teams"])
             team_pred = team_model.blend_odds(team_pred, odds)
+            n_blended = int(team_pred["odds_blended"].sum())
+            if n_blended:
+                console.print(f"  odds blend: {n_blended} fixtures matched market prices")
         except Exception as exc:  # noqa: BLE001 - odds are optional enrichment
             console.print(f"  [yellow]odds blend skipped: {exc}[/yellow]")
 
-    minutes_pred = minutes_model.predict(features)
-    rates_pred = rates_model.predict(features)
+    if live_adjust is not None:
+        from fplai.data import live
+
+        minutes_pred = live.live_minutes_predict(minutes_model, features, live_adjust)
+        rates_pred = live.apply_cold_start_rates(
+            rates_model.predict(features), features, live_adjust
+        )
+    else:
+        minutes_pred = minutes_model.predict(features)
+        rates_pred = rates_model.predict(features)
 
     xp_parts: list[pd.DataFrame] = []
     for season, feats_s in features.groupby("season"):
@@ -780,6 +831,7 @@ def run_predict(
 
     tables = load_processed_tables()
     fixtures = tables["fixtures"]
+    ctx: Any | None = None
 
     if season is not None and gw is not None:
         mode = f"backtest {season} GW{gw}+ (horizon {horizon})"
@@ -792,6 +844,23 @@ def run_predict(
             return None
         rows = features[(features["season"] == season) & (features["gw"].isin(gws))]
     else:
+        ctx = _live_context()
+        if ctx is not None:
+            from fplai.data import live
+
+            live_odds = None
+            if use_odds:
+                try:
+                    live_odds = live.fetch_live_odds(ctx)
+                except Exception as exc:  # noqa: BLE001 - odds are optional enrichment
+                    console.print(f"  [yellow]live odds unavailable: {exc}[/yellow]")
+            tables = live.augment_tables(tables, ctx, odds=live_odds)
+            fixtures = tables["fixtures"]
+            console.print(
+                f"  live snapshot {ctx.snap_dir.name}: season {ctx.season}, "
+                f"{len(ctx.roster)} rostered players, "
+                f"{len(live_odds) if live_odds is not None else 0} odds rows"
+            )
         now = pd.Timestamp.now(tz="UTC")
         upcoming = fixtures[
             ~fixtures["finished"].astype(bool)
@@ -816,7 +885,17 @@ def run_predict(
             f"{sorted(next_keys['gw'].tolist())}"
         )
         pm = tables["player_match"]
-        synth = _future_player_match(pm, target_fx)
+        if ctx is not None and (target_fx["season"] == ctx.season).any():
+            # Bootstrap-grounded rosters for the live season; roll-forward only
+            # for any residual pre-relaunch fixtures in the window.
+            live_fx = target_fx[target_fx["season"] == ctx.season]
+            rest_fx = target_fx[target_fx["season"] != ctx.season]
+            parts = [live.bootstrap_player_match(ctx, live_fx, pm)]
+            if len(rest_fx):
+                parts.append(_future_player_match(pm, rest_fx))
+            synth = pd.concat(parts, ignore_index=True)
+        else:
+            synth = _future_player_match(pm, target_fx)
         # Guard against duplicating rows the build already produced (keyed per
         # fixture so a played DGW leg never suppresses the upcoming one).
         played_keys = set(
@@ -833,6 +912,13 @@ def run_predict(
         ]
         aug = dict(tables)
         aug["player_match"] = pd.concat([pm, synth], ignore_index=True)
+        if ctx is not None:
+            live_gws = sorted(
+                int(g)
+                for g in next_keys.loc[next_keys["season"] == ctx.season, "gw"].unique()
+            )
+            if live_gws:
+                aug["availability"] = live.availability_frame(ctx, live_gws)
         features = build_feature_frame(aug, target="match")
         want = set(
             zip(synth["season"], synth["gw"], synth["player_code"], synth["fpl_fixture_id"],
@@ -851,8 +937,23 @@ def run_predict(
     console.print(f"[bold]predict[/bold]: {mode} — {len(rows):,} player-fixture rows")
     out.mkdir(parents=True, exist_ok=True)
     _manifest, minutes_model, team_model, rates_model, calibration = _load_artifacts(models_dir)
+    live_adjust = None
+    if ctx is not None:
+        from fplai.data import live
+
+        seed_report = live.seed_team_model(team_model, ctx)
+        live_adjust = live.build_adjustments(ctx, tables["player_match"])
+        live.persist_live_tables(ctx, tables)
+        console.print(
+            f"  live adjustments: {len(seed_report['promoted'])} promoted clubs seeded, "
+            f"{len(seed_report['new_manager'])} new-manager clubs widened, "
+            f"{len(live_adjust.cold_codes)} cold-start players, "
+            f"fatigue dampening for {len(live_adjust.fatigue)} WC2026 players "
+            f"(GWs {live_adjust.fatigue_gws[0]}-{live_adjust.fatigue_gws[-1]})"
+        )
     pred, gw_pred = _predict_frames(
-        rows, fixtures, tables, (minutes_model, team_model, rates_model, calibration), use_odds
+        rows, fixtures, tables, (minutes_model, team_model, rates_model, calibration), use_odds,
+        live_adjust=live_adjust,
     )
     paths = {
         "predictions": out / "predictions.parquet",
@@ -892,11 +993,15 @@ def _optimizer_prices(
     """Build the optimizer's ``prices`` frame: one row per player in the xp window.
 
     Columns: ``player_code, price, position, team_code, web_name`` (price in
-    £0.1m units) per the ``optimizer/milp.py`` contract.  Prices/positions are
-    re-derived from the latest ``player_gw`` snapshot at/before ``start_gw``
-    (falling back to the previous season for players without rows yet, e.g.
-    pre-GW1); the prediction frames' rolled-forward context fills any player
-    the snapshot misses.  Players with no resolvable price/position/team are
+    £0.1m units) per the ``optimizer/milp.py`` contract.  In live mode
+    (``live_roster.parquet`` present for the target season, written by
+    ``run_predict``) the bootstrap roster is the primary source — real
+    deadline prices/positions/clubs; the ``player_gw`` snapshot would
+    resurrect last season's context for a live GW1.  Otherwise
+    prices/positions are re-derived from the latest ``player_gw`` snapshot
+    at/before ``start_gw`` (falling back to the previous season for players
+    without rows yet); the prediction frames' context fills any player the
+    snapshots miss.  Players with no resolvable price/position/team are
     dropped with a warning (the MILP cannot place them).
     """
     import numpy as np
@@ -931,8 +1036,28 @@ def _optimizer_prices(
                 base[col] = base[col].where(base[col].notna(), base[f"{col}_fx"])
                 base = base.drop(columns=f"{col}_fx")
 
-    # Primary source: re-derive from the latest player_gw row at/before start_gw
-    # (previous-season rows cover players with no target-season appearance yet).
+    # Live primary source: the bootstrap roster snapshot for this season.
+    roster_covers = False
+    roster_path = processed / "live_roster.parquet"
+    if roster_path.exists():
+        roster = pd.read_parquet(roster_path)
+        if "season" in roster.columns and (roster["season"] == season).any():
+            snap = roster.loc[
+                roster["season"] == season,
+                ["player_code", "price", "position", "team_code", "web_name"],
+            ].drop_duplicates("player_code")
+            base = base.merge(snap, on="player_code", how="left", suffixes=("", "_lr"))
+            for col in ("price", "position", "team_code", "web_name"):
+                base[col] = base[f"{col}_lr"].where(base[f"{col}_lr"].notna(), base[col])
+                base = base.drop(columns=f"{col}_lr")
+            roster_covers = True
+            console.print(
+                f"  prices: live roster snapshot ({roster_path.name}) is the primary source"
+            )
+
+    # player_gw snapshot at/before start_gw: primary source pre-relaunch, gap
+    # filler when the live roster covers the season (previous-season rows cover
+    # players with no target-season appearance yet).
     pg_path = processed / "player_gw.parquet"
     if pg_path.exists():
         pg = pd.read_parquet(
@@ -950,7 +1075,10 @@ def _optimizer_prices(
         )
         base = base.merge(snap, on="player_code", how="left", suffixes=("", "_pg"))
         for col in ("price", "position", "team_code"):
-            base[col] = base[f"{col}_pg"].where(base[f"{col}_pg"].notna(), base[col])
+            if roster_covers:
+                base[col] = base[col].where(base[col].notna(), base[f"{col}_pg"])
+            else:
+                base[col] = base[f"{col}_pg"].where(base[f"{col}_pg"].notna(), base[col])
             base = base.drop(columns=f"{col}_pg")
 
     # Names: fill gaps from the canonical players table when available.

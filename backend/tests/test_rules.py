@@ -16,10 +16,12 @@ from fplai.rules import (
     GW1_DEADLINE_2026,
     POSITION_RECLASSIFICATIONS_2026,
     POSITIONS,
+    RECLASSIFIED_ABSENT_AT_LAUNCH_2026,
     SAVES_PER_POINT,
     SEASON_FLAGS,
     SEASONS,
     SET1_EXPIRY_GW,
+    TRANSFERS_CAP_PER_GW,
     VOID_EVENT_REMAP,
     ChipWindow,
     chip_windows,
@@ -263,6 +265,23 @@ class TestChipWindows:
         with pytest.raises(AttributeError):
             window.first_gw = 5  # type: ignore[misc]
 
+    def test_2026_windows_match_launch_api(self) -> None:
+        # Pinned to the day-1 2026-27 bootstrap chips[] (snapshot 2026-07-23):
+        # 8 instances as (api_name, start_event, stop_event).
+        launch = {
+            ("wildcard", 2, 19),
+            ("wildcard", 20, 38),
+            ("freehit", 2, 19),
+            ("freehit", 20, 38),
+            ("bboost", 1, 19),
+            ("bboost", 20, 38),
+            ("3xc", 1, 19),
+            ("3xc", 20, 38),
+        }
+        api_name = {"WC": "wildcard", "FH": "freehit", "BB": "bboost", "TC": "3xc"}
+        ours = {(api_name[w.name], w.first_gw, w.last_gw) for w in chip_windows(2026)}
+        assert ours == launch
+
 
 class TestSellPrice:
     def test_no_change(self) -> None:
@@ -325,6 +344,10 @@ class TestTransferStateMachine:
         with pytest.raises(ValueError):
             next_free_transfers(1, 0, 2015, False)
 
+    def test_transfers_cap(self) -> None:
+        # CONFIRMED at launch: game_settings.transfers_cap == 20 (2026-07-23 snapshot).
+        assert TRANSFERS_CAP_PER_GW == 20
+
 
 class TestBps:
     def test_v4_headline_values(self) -> None:
@@ -370,16 +393,20 @@ class TestBps:
 class TestReclassifications:
     def test_eleven_players(self) -> None:
         assert len(POSITION_RECLASSIFICATIONS_2026) == 11
-        assert len({(n, c) for n, c, _, _ in POSITION_RECLASSIFICATIONS_2026}) == 11
+        assert len({(n, c) for n, c, _, _, _ in POSITION_RECLASSIFICATIONS_2026}) == 11
+        # player_code is the stable cross-season key — must be unique
+        assert len({code for *_, code in POSITION_RECLASSIFICATIONS_2026}) == 11
 
-    def test_known_entries(self) -> None:
-        assert ("Wieffer", "BHA", "MID", "DEF") in POSITION_RECLASSIFICATIONS_2026
-        assert ("Marmoush", "MCI", "MID", "FWD") in POSITION_RECLASSIFICATIONS_2026
-        assert ("Lewis-Skelly", "ARS", "DEF", "MID") in POSITION_RECLASSIFICATIONS_2026
-        assert ("Kroupi", "BOU", "FWD", "MID") in POSITION_RECLASSIFICATIONS_2026
+    def test_known_entries_launch_verified(self) -> None:
+        # web_name spellings and codes as in the 2026-27 day-1 bootstrap (2026-07-23).
+        assert ("Wieffer", "BHA", "MID", "DEF", 467779) in POSITION_RECLASSIFICATIONS_2026
+        assert ("Marmoush", "MCI", "MID", "FWD", 438234) in POSITION_RECLASSIFICATIONS_2026
+        assert ("Lewis-Skelly", "ARS", "DEF", "MID", 499169) in POSITION_RECLASSIFICATIONS_2026
+        assert ("Kroupi.Jr", "BOU", "FWD", "MID", 560262) in POSITION_RECLASSIFICATIONS_2026
+        assert ("Georginio", "BHA", "MID", "FWD", 463067) in POSITION_RECLASSIFICATIONS_2026
 
     def test_positions_valid_and_changed(self) -> None:
-        for name, _club, old, new in POSITION_RECLASSIFICATIONS_2026:
+        for name, _club, old, new, _code in POSITION_RECLASSIFICATIONS_2026:
             assert old in POSITIONS and new in POSITIONS, name
             assert old != new, name
             assert "GKP" not in (old, new), name  # no GK reclassifications
@@ -389,6 +416,14 @@ class TestReclassifications:
         to_def = [r for r in POSITION_RECLASSIFICATIONS_2026 if r[3] == "DEF"]
         to_fwd = [r for r in POSITION_RECLASSIFICATIONS_2026 if r[3] == "FWD"]
         assert (len(to_mid), len(to_def), len(to_fwd)) == (5, 4, 2)
+
+    def test_absent_at_launch(self) -> None:
+        # Eric da Silva Moreira (NFO) had no element in the day-1 2026-27 bootstrap.
+        assert RECLASSIFIED_ABSENT_AT_LAUNCH_2026 == frozenset({569014})
+        codes = {code for *_, code in POSITION_RECLASSIFICATIONS_2026}
+        assert RECLASSIFIED_ABSENT_AT_LAUNCH_2026 <= codes
+        entry = next(r for r in POSITION_RECLASSIFICATIONS_2026 if r[4] == 569014)
+        assert entry == ("Da Silva Moreira", "NFO", "MID", "DEF", 569014)
 
 
 class TestDatesAndRemaps:

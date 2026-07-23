@@ -214,6 +214,10 @@ def chip_windows(season: int) -> tuple[ChipWindow, ...]:
     2025-26 / 2026-27: two of each chip; set 1 expires at the GW19 deadline (unused
     chips lost, no carry-over), set 2 covers GW20-38. WC/FH open at GW2 (transfers are
     unlimited before the GW1 deadline; FH is never playable in GW1), BB/TC at GW1.
+    CONFIRMED AT LAUNCH for 2026-27: the day-1 bootstrap ``chips[]`` (snapshot
+    2026-07-23) carries exactly these 8 instances — wildcard/freehit start_event 2,
+    bboost/3xc start_event 1, all stop_event 19; set 2 all 20-38. GW19 deadline
+    2027-01-02T13:30:00Z per ``events[]``.
 
     Earlier seasons: two Wildcards (canonical half-season split GW2-19 / GW20-38 —
     exact historical WC1 expiry dates varied by calendar and are UNCERTAIN at the
@@ -362,27 +366,42 @@ BPS_DELTAS: dict[str, dict[str, float | None]] = {
 # 2026-27 position reclassifications (FPL_KNOWLEDGE §1.10)
 # --------------------------------------------------------------------------------------
 
-#: The 11 players reclassified for 2026-27 as (web_name, club_short, old_pos, new_pos).
-#: web_name is the expected FPL surname form — match fuzzily against elements at launch.
+#: The 11 players reclassified for 2026-27 as (web_name, club_short, old_pos, new_pos,
+#: player_code). Verified against the 2026-27 day-1 bootstrap (snapshot 2026-07-23) by
+#: ``element.code``: 10 of 11 CONFIRMED holding new_pos; web_name is the launch
+#: spelling. Eric da Silva Moreira (code 569014) was ABSENT from the day-1 elements[]
+#: entirely — his announced MID -> DEF change is retained (official announcement) but is
+#: not API-verified; his web_name below is the 2025-26 form. See
+#: :data:`RECLASSIFIED_ABSENT_AT_LAUNCH_2026`.
 #: Historical per-90 features for these players were earned under the OLD position.
-POSITION_RECLASSIFICATIONS_2026: tuple[tuple[str, str, str, str], ...] = (
-    ("Lewis-Skelly", "ARS", "DEF", "MID"),  # Myles Lewis-Skelly, Arsenal
-    ("Bogarde", "AVL", "DEF", "MID"),  # Lamare Bogarde, Aston Villa
-    ("Kroupi", "BOU", "FWD", "MID"),  # Junior Kroupi, Bournemouth
-    ("Lewis-Potter", "BRE", "DEF", "MID"),  # Keane Lewis-Potter, Brentford
-    ("Wieffer", "BHA", "MID", "DEF"),  # Mats Wieffer, Brighton
-    ("Rutter", "BHA", "MID", "FWD"),  # Georginio Rutter, Brighton
-    ("Cardines", "CRY", "MID", "DEF"),  # Rio Cardines, Crystal Palace
-    ("Sessegnon", "FUL", "MID", "DEF"),  # Ryan Sessegnon, Fulham
-    ("Marmoush", "MCI", "MID", "FWD"),  # Omar Marmoush, Man City
-    ("Dorgu", "MUN", "DEF", "MID"),  # Patrick Dorgu, Man Utd
-    ("Moreira", "NFO", "MID", "DEF"),  # Eric Moreira, Nott'm Forest
+POSITION_RECLASSIFICATIONS_2026: tuple[tuple[str, str, str, str, int], ...] = (
+    ("Lewis-Skelly", "ARS", "DEF", "MID", 499169),  # Myles Lewis-Skelly, Arsenal
+    ("Bogarde", "AVL", "DEF", "MID", 515597),  # Lamare Bogarde, Aston Villa
+    ("Kroupi.Jr", "BOU", "FWD", "MID", 560262),  # Junior Kroupi, Bournemouth
+    ("Lewis-Potter", "BRE", "DEF", "MID", 249231),  # Keane Lewis-Potter, Brentford
+    ("Wieffer", "BHA", "MID", "DEF", 467779),  # Mats Wieffer, Brighton
+    ("Georginio", "BHA", "MID", "FWD", 463067),  # Georginio Rutter, Brighton
+    ("Cardines", "CRY", "MID", "DEF", 590014),  # Rio Cardines, Crystal Palace
+    ("Sessegnon", "FUL", "MID", "DEF", 184349),  # Ryan Sessegnon, Fulham
+    ("Marmoush", "MCI", "MID", "FWD", 438234),  # Omar Marmoush, Man City
+    ("Dorgu", "MUN", "DEF", "MID", 596777),  # Patrick Dorgu, Man Utd
+    ("Da Silva Moreira", "NFO", "MID", "DEF", 569014),  # Eric da Silva Moreira, Nott'm Forest
 )
+
+#: player_codes from the announced 2026-27 reclassifications with NO element in the
+#: day-1 2026-27 bootstrap (snapshot 2026-07-23). Treat these reclassifications as
+#: announcement-only until the player (re)appears in the API.
+RECLASSIFIED_ABSENT_AT_LAUNCH_2026: frozenset[int] = frozenset({569014})
 
 
 # --------------------------------------------------------------------------------------
 # Transfer state machine (FPL_KNOWLEDGE §1.6, §2.2)
 # --------------------------------------------------------------------------------------
+
+#: Hard cap on transfers in a single GW (API ``transfers_cap``); does not apply in
+#: WC/FH weeks. CONFIRMED AT LAUNCH for 2026-27: ``transfers_cap: 20`` in the day-1
+#: bootstrap ``game_settings`` (snapshot 2026-07-23).
+TRANSFERS_CAP_PER_GW: int = 20
 
 
 def next_free_transfers(current: int, used: int, season: int, wildcard_or_fh: bool) -> int:
@@ -415,9 +434,8 @@ def next_free_transfers(current: int, used: int, season: int, wildcard_or_fh: bo
 # --------------------------------------------------------------------------------------
 
 #: 2026-27 GW1 deadline: Friday 21 Aug 2026, 18:30 BST = 17:30 UTC.
-#: UNCERTAIN — officially stated in the Price Change Predictor article
-#: (premierleague.com/en/news/4680462) but the 2026-27 API has not launched;
-#: re-verify against events[0].deadline_time at the static_content_url flip.
+#: CONFIRMED AT LAUNCH — ``events[0].deadline_time == "2026-08-21T17:30:00Z"`` in the
+#: 2026-27 day-1 bootstrap (snapshot 2026-07-23, static_content_url .../2026_27/).
 GW1_DEADLINE_2026: datetime = datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 
 #: 2019-20 COVID restart: the API renumbered the restarted rounds as events 39-47.

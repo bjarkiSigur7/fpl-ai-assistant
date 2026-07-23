@@ -174,7 +174,12 @@ def test_team_name_maps_cover_every_fpl_club_2016_2025() -> None:
     fpl_names = set(crosswalk.FOOTBALLDATA_TEAM_NAMES)
     assert fpl_names == set(crosswalk.UNDERSTAT_TEAM_NAMES)
     assert fpl_names <= set(crosswalk.CLUBELO_TEAM_NAMES)
-    assert len(fpl_names) == 34  # distinct PL clubs across 2016-17..2025-26
+    # 34 distinct PL clubs across 2016-17..2025-26 + the three 2026-27
+    # bootstrap spellings of the promoted clubs (Coventry City / Hull City /
+    # Ipswich Town).
+    assert len(fpl_names) == 37
+    for name in ("Coventry City", "Hull City", "Ipswich Town"):
+        assert name in fpl_names and name in crosswalk.CLUBELO_TEAM_NAMES
 
 
 # --- synthetic processed + raw tree -------------------------------------------------

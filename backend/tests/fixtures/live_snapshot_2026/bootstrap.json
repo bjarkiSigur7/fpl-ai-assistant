@@ -1,0 +1,588 @@
+{
+ "game_config": {
+  "settings": {
+   "static_content_url": "https://fantasy.premierleague.com/gcs/plfpl-prod-static-content/plfpl-production/2026_27/"
+  }
+ },
+ "events": [
+  {
+   "id": 1,
+   "name": "Gameweek 1",
+   "deadline_time": "2026-08-21T17:30:00Z",
+   "is_current": false,
+   "is_next": true,
+   "finished": false
+  },
+  {
+   "id": 2,
+   "name": "Gameweek 2",
+   "deadline_time": "2026-08-28T17:30:00Z",
+   "is_current": false,
+   "is_next": false,
+   "finished": false
+  },
+  {
+   "id": 3,
+   "name": "Gameweek 3",
+   "deadline_time": "2026-09-04T17:30:00Z",
+   "is_current": false,
+   "is_next": false,
+   "finished": false
+  },
+  {
+   "id": 4,
+   "name": "Gameweek 4",
+   "deadline_time": "2026-09-12T12:30:00Z",
+   "is_current": false,
+   "is_next": false,
+   "finished": false
+  },
+  {
+   "id": 5,
+   "name": "Gameweek 5",
+   "deadline_time": "2026-09-18T17:30:00Z",
+   "is_current": false,
+   "is_next": false,
+   "finished": false
+  }
+ ],
+ "teams": [
+  {
+   "id": 1,
+   "code": 3,
+   "name": "Arsenal",
+   "short_name": "ARS"
+  },
+  {
+   "id": 2,
+   "code": 7,
+   "name": "Aston Villa",
+   "short_name": "AVL"
+  },
+  {
+   "id": 3,
+   "code": 91,
+   "name": "Bournemouth",
+   "short_name": "BOU"
+  },
+  {
+   "id": 4,
+   "code": 94,
+   "name": "Brentford",
+   "short_name": "BRE"
+  },
+  {
+   "id": 5,
+   "code": 36,
+   "name": "Brighton",
+   "short_name": "BHA"
+  },
+  {
+   "id": 6,
+   "code": 8,
+   "name": "Chelsea",
+   "short_name": "CHE"
+  },
+  {
+   "id": 7,
+   "code": 9,
+   "name": "Coventry City",
+   "short_name": "COV"
+  },
+  {
+   "id": 8,
+   "code": 31,
+   "name": "Crystal Palace",
+   "short_name": "CRY"
+  },
+  {
+   "id": 9,
+   "code": 11,
+   "name": "Everton",
+   "short_name": "EVE"
+  },
+  {
+   "id": 10,
+   "code": 54,
+   "name": "Fulham",
+   "short_name": "FUL"
+  },
+  {
+   "id": 11,
+   "code": 88,
+   "name": "Hull City",
+   "short_name": "HUL"
+  },
+  {
+   "id": 12,
+   "code": 40,
+   "name": "Ipswich Town",
+   "short_name": "IPS"
+  },
+  {
+   "id": 13,
+   "code": 2,
+   "name": "Leeds",
+   "short_name": "LEE"
+  },
+  {
+   "id": 14,
+   "code": 14,
+   "name": "Liverpool",
+   "short_name": "LIV"
+  },
+  {
+   "id": 15,
+   "code": 43,
+   "name": "Man City",
+   "short_name": "MCI"
+  },
+  {
+   "id": 16,
+   "code": 1,
+   "name": "Man Utd",
+   "short_name": "MUN"
+  },
+  {
+   "id": 17,
+   "code": 4,
+   "name": "Newcastle",
+   "short_name": "NEW"
+  },
+  {
+   "id": 18,
+   "code": 17,
+   "name": "Nott'm Forest",
+   "short_name": "NFO"
+  },
+  {
+   "id": 19,
+   "code": 6,
+   "name": "Spurs",
+   "short_name": "TOT"
+  },
+  {
+   "id": 20,
+   "code": 56,
+   "name": "Sunderland",
+   "short_name": "SUN"
+  }
+ ],
+ "element_types": [
+  {
+   "id": 1,
+   "singular_name_short": "GKP"
+  },
+  {
+   "id": 2,
+   "singular_name_short": "DEF"
+  },
+  {
+   "id": 3,
+   "singular_name_short": "MID"
+  },
+  {
+   "id": 4,
+   "singular_name_short": "FWD"
+  }
+ ],
+ "total_players": 223802,
+ "elements": [
+  {
+   "id": 1,
+   "code": 154561,
+   "web_name": "Raya",
+   "first_name": "David",
+   "second_name": "Raya Martín",
+   "element_type": 1,
+   "team": 1,
+   "team_code": 3,
+   "now_cost": 60,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "22.5",
+   "can_select": true,
+   "opta_code": "p154561"
+  },
+  {
+   "id": 5,
+   "code": 445122,
+   "web_name": "J.Timber",
+   "first_name": "Jurriën",
+   "second_name": "Timber",
+   "element_type": 2,
+   "team": 1,
+   "team_code": 3,
+   "now_cost": 65,
+   "status": "i",
+   "news": "Groin injury - Expected back 21 Aug",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "1.8",
+   "can_select": true,
+   "opta_code": "p445122"
+  },
+  {
+   "id": 6,
+   "code": 462424,
+   "web_name": "Saliba",
+   "first_name": "William",
+   "second_name": "Saliba",
+   "element_type": 2,
+   "team": 1,
+   "team_code": 3,
+   "now_cost": 60,
+   "status": "i",
+   "news": "Back injury - Unknown return date",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.6",
+   "can_select": true,
+   "opta_code": "p462424"
+  },
+  {
+   "id": 12,
+   "code": 223340,
+   "web_name": "Saka",
+   "first_name": "Bukayo",
+   "second_name": "Saka",
+   "element_type": 3,
+   "team": 1,
+   "team_code": 3,
+   "now_cost": 95,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "11.8",
+   "can_select": true,
+   "opta_code": "p223340"
+  },
+  {
+   "id": 13,
+   "code": 204480,
+   "web_name": "Rice",
+   "first_name": "Declan",
+   "second_name": "Rice",
+   "element_type": 3,
+   "team": 1,
+   "team_code": 3,
+   "now_cost": 75,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "25.7",
+   "can_select": true,
+   "opta_code": "p204480"
+  },
+  {
+   "id": 47,
+   "code": 226944,
+   "web_name": "Kamara",
+   "first_name": "Boubacar",
+   "second_name": "Kamara",
+   "element_type": 3,
+   "team": 2,
+   "team_code": 7,
+   "now_cost": 50,
+   "status": "d",
+   "news": "Knee injury - 75% chance of playing",
+   "chance_of_playing_next_round": 75,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.1",
+   "can_select": true,
+   "opta_code": "p226944"
+  },
+  {
+   "id": 99,
+   "code": 543295,
+   "web_name": "Milambo",
+   "first_name": "Antoni",
+   "second_name": "Milambo",
+   "element_type": 3,
+   "team": 4,
+   "team_code": 94,
+   "now_cost": 50,
+   "status": "d",
+   "news": "Knee injury - 75% chance of playing",
+   "chance_of_playing_next_round": 75,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.0",
+   "can_select": true,
+   "opta_code": "p543295"
+  },
+  {
+   "id": 108,
+   "code": 75115,
+   "web_name": "Wilson",
+   "first_name": "Callum",
+   "second_name": "Wilson",
+   "element_type": 4,
+   "team": 4,
+   "team_code": 94,
+   "now_cost": 55,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.3",
+   "can_select": true,
+   "opta_code": "p75115"
+  },
+  {
+   "id": 130,
+   "code": 467779,
+   "web_name": "Wieffer",
+   "first_name": "Mats",
+   "second_name": "Wieffer",
+   "element_type": 2,
+   "team": 5,
+   "team_code": 36,
+   "now_cost": 50,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.9",
+   "can_select": true,
+   "opta_code": "p467779"
+  },
+  {
+   "id": 145,
+   "code": 444463,
+   "web_name": "Fofana",
+   "first_name": "Wesley",
+   "second_name": "Fofana",
+   "element_type": 2,
+   "team": 6,
+   "team_code": 8,
+   "now_cost": 50,
+   "status": "s",
+   "news": "Suspended until 6 Sep",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.0",
+   "can_select": true,
+   "opta_code": "p444463"
+  },
+  {
+   "id": 172,
+   "code": 110690,
+   "web_name": "Wilson",
+   "first_name": "Ben",
+   "second_name": "Wilson",
+   "element_type": 1,
+   "team": 7,
+   "team_code": 9,
+   "now_cost": 45,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "1.5",
+   "can_select": true,
+   "opta_code": "p110690"
+  },
+  {
+   "id": 178,
+   "code": 80178,
+   "web_name": "Bidwell",
+   "first_name": "Jake",
+   "second_name": "Bidwell",
+   "element_type": 2,
+   "team": 7,
+   "team_code": 9,
+   "now_cost": 40,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.3",
+   "can_select": true,
+   "opta_code": "p80178"
+  },
+  {
+   "id": 193,
+   "code": 176412,
+   "web_name": "Wright",
+   "first_name": "Haji",
+   "second_name": "Wright",
+   "element_type": 4,
+   "team": 7,
+   "team_code": 9,
+   "now_cost": 55,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "2.1",
+   "can_select": true,
+   "opta_code": "p176412"
+  },
+  {
+   "id": 225,
+   "code": 660392,
+   "web_name": "Uche",
+   "first_name": "Christantus",
+   "second_name": "Uche",
+   "element_type": 4,
+   "team": 8,
+   "team_code": 31,
+   "now_cost": 50,
+   "status": "u",
+   "news": "has returned to Getafe CF",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.0",
+   "can_select": false,
+   "opta_code": "p660392"
+  },
+  {
+   "id": 253,
+   "code": 174874,
+   "web_name": "Andersen",
+   "first_name": "Joachim",
+   "second_name": "Andersen",
+   "element_type": 2,
+   "team": 10,
+   "team_code": 54,
+   "now_cost": 50,
+   "status": "s",
+   "news": "Suspended until 29 Aug",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.1",
+   "can_select": true,
+   "opta_code": "p174874"
+  },
+  {
+   "id": 295,
+   "code": 169432,
+   "web_name": "McBurnie",
+   "first_name": "Oli",
+   "second_name": "McBurnie",
+   "element_type": 4,
+   "team": 11,
+   "team_code": 88,
+   "now_cost": 55,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "2.3",
+   "can_select": true,
+   "opta_code": "p169432"
+  },
+  {
+   "id": 313,
+   "code": 443261,
+   "web_name": "Clarke",
+   "first_name": "Jack",
+   "second_name": "Clarke",
+   "element_type": 3,
+   "team": 12,
+   "team_code": 40,
+   "now_cost": 55,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.3",
+   "can_select": true,
+   "opta_code": "p443261"
+  },
+  {
+   "id": 260,
+   "code": 153682,
+   "web_name": "Wilson",
+   "first_name": "Harry",
+   "second_name": "Wilson",
+   "element_type": 3,
+   "team": 13,
+   "team_code": 2,
+   "now_cost": 65,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "9.7",
+   "can_select": true,
+   "opta_code": "p153682"
+  },
+  {
+   "id": 401,
+   "code": 438234,
+   "web_name": "Marmoush",
+   "first_name": "Omar",
+   "second_name": "Marmoush",
+   "element_type": 4,
+   "team": 15,
+   "team_code": 43,
+   "now_cost": 70,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.4",
+   "can_select": true,
+   "opta_code": "p438234"
+  },
+  {
+   "id": 402,
+   "code": 220566,
+   "web_name": "Rodrigo",
+   "first_name": "Rodrigo 'Rodri'",
+   "second_name": "Hernandez Cascante",
+   "element_type": 3,
+   "team": 15,
+   "team_code": 43,
+   "now_cost": 65,
+   "status": "i",
+   "news": "Back injury - Unknown return date",
+   "chance_of_playing_next_round": 0,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "0.1",
+   "can_select": true,
+   "opta_code": "p220566"
+  },
+  {
+   "id": 411,
+   "code": 223094,
+   "web_name": "Haaland",
+   "first_name": "Erling",
+   "second_name": "Haaland",
+   "element_type": 4,
+   "team": 15,
+   "team_code": 43,
+   "now_cost": 155,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "59.1",
+   "can_select": true,
+   "opta_code": "p223094"
+  },
+  {
+   "id": 499,
+   "code": 441164,
+   "web_name": "Pedro Porro",
+   "first_name": "Pedro",
+   "second_name": "Porro Sauceda",
+   "element_type": 2,
+   "team": 19,
+   "team_code": 6,
+   "now_cost": 55,
+   "status": "a",
+   "news": "",
+   "chance_of_playing_next_round": null,
+   "chance_of_playing_this_round": null,
+   "selected_by_percent": "18.7",
+   "can_select": true,
+   "opta_code": "p441164"
+  }
+ ]
+}

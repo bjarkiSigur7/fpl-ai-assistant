@@ -438,6 +438,8 @@ def test_run_predict_live_mode_degrades_without_upcoming_fixtures(
     monkeypatch.setattr(
         pipeline, "load_processed_tables", lambda processed_dir=None: {"fixtures": fixtures}
     )
+    # Pin the no-snapshot path: the repo's real raw dir may hold a live snapshot.
+    monkeypatch.setattr(pipeline, "_live_context", lambda: None)
     assert pipeline.run_predict() is None
     assert "no upcoming fixtures" in capsys.readouterr().out
 
@@ -487,7 +489,10 @@ def test_predict_live_mode_synthesizes_upcoming_fixtures(
                        models_dir=tmp_path / "models")
 
     tables = pipeline.load_processed_tables()
-    fx = tables["fixtures"].copy()
+    # Live refreshes persist upcoming 2026-27 fixtures into fixtures.parquet;
+    # drop them so the simulated 2025 GW38 is the only upcoming window here.
+    fx = tables["fixtures"]
+    fx = fx[fx["season"] <= 2025].copy()
     mask = (fx["season"] == 2025) & (fx["gw"] == 38)
     assert mask.any()
     fx.loc[mask, "finished"] = False
@@ -497,6 +502,9 @@ def test_predict_live_mode_synthesizes_upcoming_fixtures(
     tables["fixtures"] = fx
     tables["player_match"] = pm[~((pm["season"] == 2025) & (pm["gw"] == 38))].copy()
     monkeypatch.setattr(pipeline, "load_processed_tables", lambda processed_dir=None: tables)
+    # This test exercises the pre-relaunch roll-forward synthesizer; disable the
+    # live 2026-27 snapshot the repo's raw dir now carries.
+    monkeypatch.setattr(pipeline, "_live_context", lambda: None)
 
     paths = pipeline.run_predict(models_dir=tmp_path / "models", out_dir=tmp_path / "out")
     assert paths is not None

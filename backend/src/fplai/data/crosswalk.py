@@ -271,12 +271,15 @@ FOOTBALLDATA_TEAM_NAMES: dict[str, str] = {
     "Burnley": "Burnley",
     "Cardiff": "Cardiff",
     "Chelsea": "Chelsea",
+    "Coventry City": "Coventry",  # 2026-27 bootstrap spelling (promoted)
     "Crystal Palace": "Crystal Palace",
     "Everton": "Everton",
     "Fulham": "Fulham",
     "Huddersfield": "Huddersfield",
     "Hull": "Hull",
+    "Hull City": "Hull",  # 2026-27 bootstrap spelling (promoted)
     "Ipswich": "Ipswich",
+    "Ipswich Town": "Ipswich",  # 2026-27 bootstrap spelling (promoted)
     "Leeds": "Leeds",
     "Leicester": "Leicester",
     "Liverpool": "Liverpool",
@@ -309,12 +312,17 @@ UNDERSTAT_TEAM_NAMES: dict[str, str] = {
     "Burnley": "Burnley",
     "Cardiff": "Cardiff",
     "Chelsea": "Chelsea",
+    # 2026-27 bootstrap spelling; Understat has no PL Coventry history yet — the
+    # value follows Understat's short-name convention (verify at first join).
+    "Coventry City": "Coventry",
     "Crystal Palace": "Crystal Palace",
     "Everton": "Everton",
     "Fulham": "Fulham",
     "Huddersfield": "Huddersfield",
     "Hull": "Hull",
+    "Hull City": "Hull",  # 2026-27 bootstrap spelling (verified 2016-17 title "Hull")
     "Ipswich": "Ipswich",
+    "Ipswich Town": "Ipswich",  # 2026-27 bootstrap spelling (verified 2024-25 title)
     "Leeds": "Leeds",
     "Leicester": "Leicester",
     "Liverpool": "Liverpool",
@@ -338,8 +346,15 @@ UNDERSTAT_TEAM_NAMES: dict[str, str] = {
 }
 
 #: FPL bootstrap ``team.name`` -> ClubElo ``Club`` (delegated to the clubelo client's
-#: verified roster, which also accepts common variants).
-CLUBELO_TEAM_NAMES: dict[str, str] = dict(PL_CLUBELO_NAMES)
+#: verified roster, which also accepts common variants).  The 2026-27 promoted-club
+#: bootstrap spellings map to ClubElo's short forms (Hull/Ipswich verified via the
+#: clubelo roster; Coventry follows the same convention — verify at first probe).
+CLUBELO_TEAM_NAMES: dict[str, str] = {
+    **PL_CLUBELO_NAMES,
+    "Coventry City": "Coventry",
+    "Hull City": "Hull",
+    "Ipswich Town": "Ipswich",
+}
 
 _AUX_NAME_MAPS: dict[str, dict[str, str]] = {
     "understat_name": UNDERSTAT_TEAM_NAMES,
