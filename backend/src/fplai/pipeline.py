@@ -333,9 +333,11 @@ def run_refresh() -> None:
     The data portion (snapshot -> incremental pulls -> build) is fully wired
     and must succeed; the model stages are best-effort so `fplai refresh`
     stays exit-0: train is never run automatically (run `fplai train`);
-    predict and then optimize run when artifacts exist, each logging and
-    continuing on failure.  In pre-launch mode the refresh ends by printing
-    the launch-watch status (season state) prominently.
+    predict, optimize and then the chip-timing simulation run when artifacts
+    exist, each logging and continuing on failure.  In live mode predict
+    defaults its window to the end of the current chip window (GW19 pre-GW20)
+    so the simulation has full coverage.  In pre-launch mode the refresh ends
+    by printing the launch-watch status (season state) prominently.
     """
     state = run_snapshot()
     console.print("[bold]refresh[/bold]: incremental pulls")
@@ -345,18 +347,28 @@ def run_refresh() -> None:
 
     if (config.MODELS_DIR / "manifest.json").exists():
         console.print("[bold]train[/bold]: using existing artifacts (retrain with `fplai train`)")
+        through: int | None = None
+        if state.is_live_2026_27 and state.next_gw is not None:
+            from fplai.models.sampler import chip_window_end
+
+            through = chip_window_end(state.season, int(state.next_gw))
         try:
-            run_predict()
+            run_predict(through_gw=through)
         except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
             console.print(f"[bold]predict[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
         try:
             run_optimize()
         except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
             console.print(f"[bold]optimize[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
+        try:
+            run_simulate()
+        except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
+            console.print(f"[bold]simulate[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
     else:
         console.print("[bold]train[/bold]: no model artifacts yet — run `fplai train` (skipping)")
         console.print("[bold]predict[/bold]: skipped (no model artifacts)")
         console.print("[bold]optimize[/bold]: skipped (no model artifacts)")
+        console.print("[bold]simulate[/bold]: skipped (no model artifacts)")
     _print_launch_watch(state)
     console.print("[bold]refresh[/bold]: data refresh complete")
 
@@ -805,6 +817,7 @@ def run_predict(
     gw: int | None = None,
     *,
     horizon: int | None = None,
+    through_gw: int | None = None,
     use_odds: bool = True,
     models_dir: Path | None = None,
     out_dir: Path | None = None,
@@ -817,6 +830,12 @@ def run_predict(
     instead).  Backtest mode (``season`` + ``gw``): predict historical GWs
     ``gw .. gw+horizon-1`` of ``season`` from strictly-prior information.
 
+    ``through_gw`` (live mode only; mutually exclusive with ``horizon``)
+    extends the window through that GW inclusive — the season-simulation
+    stage wants predictions to the end of the current chip window
+    (``fplai predict --through-gw 19``); ``run_refresh`` passes it
+    automatically in live mode.
+
     Returns ``{"predictions": path, "predictions_gw": path}`` or ``None``.
     """
     import pandas as pd
@@ -826,6 +845,11 @@ def run_predict(
 
     if (season is None) != (gw is None):
         raise ValueError("season and gw must be given together (backtest mode) or not at all")
+    if through_gw is not None:
+        if season is not None:
+            raise ValueError("through_gw is a live-mode option; use horizon in backtest mode")
+        if horizon is not None:
+            raise ValueError("give either horizon or through_gw, not both")
     horizon = horizon if horizon is not None else config.settings.horizon_gws
     out = Path(out_dir) if out_dir is not None else config.PROCESSED_DIR
 
@@ -873,12 +897,16 @@ def run_predict(
                 "Use backtest mode, e.g. `fplai predict --season 2025 --gw 30`."
             )
             return None
-        next_keys = (
+        gw_keys = (
             upcoming.groupby(["season", "gw"], as_index=False)["kickoff_utc"]
             .min()
             .sort_values("kickoff_utc")
-            .head(horizon)[["season", "gw"]]
         )
+        if through_gw is not None:
+            from fplai.models.sampler import horizon_through_gw
+
+            horizon = horizon_through_gw(int(gw_keys.iloc[0]["gw"]), through_gw)
+        next_keys = gw_keys.head(horizon)[["season", "gw"]]
         target_fx = upcoming.merge(next_keys, on=["season", "gw"])
         mode = (
             f"live: {len(target_fx)} upcoming fixtures over GWs "
@@ -1132,6 +1160,39 @@ def _optimize_is_live(processed: Path, season: int, start_gw: int) -> bool:
         & (window["kickoff_utc"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta("12h"))
     ]
     return not upcoming.empty
+
+
+def _load_chip_sim_report(processed: Path, season: int, start_gw: int) -> Any | None:
+    """The persisted season-simulation report, when it matches the target window.
+
+    ``fplai simulate`` writes ``chip_sim_report.json`` beside ``chip_sim.parquet``; a
+    later ``fplai optimize`` folds those verdicts into the recommendation when the
+    report targets the same (season, next GW).  Stale or unreadable reports are
+    skipped with a message — re-run ``fplai simulate`` after the deadline rolls over.
+    """
+    path = processed / "chip_sim_report.json"
+    if not path.exists():
+        return None
+    from fplai.optimizer.season_sim import ChipSimReport
+
+    try:
+        report = ChipSimReport.model_validate_json(path.read_text())
+    except Exception as exc:  # noqa: BLE001 - a stale artifact must not block optimize
+        console.print(f"  [yellow]chip_sim_report.json unreadable ({exc}) — ignoring[/yellow]")
+        return None
+    if int(report.season) != season or int(report.window_first_gw) != start_gw:
+        console.print(
+            f"  [yellow]chip_sim_report.json targets season {report.season} "
+            f"GW{report.window_first_gw} (want {season} GW{start_gw}) — stale, "
+            "ignoring (re-run `fplai simulate`)[/yellow]"
+        )
+        return None
+    console.print(
+        f"  chip advice: folding season-simulation verdicts (GWs "
+        f"{report.window_first_gw}-{report.window_last_gw}, "
+        f"{report.n_rollouts:,} rollouts)"
+    )
+    return report
 
 
 def _entry_state(entry_id: int, pred_gw: pd.DataFrame) -> Any | None:
@@ -1431,6 +1492,7 @@ def run_optimize(
             "the dashboard shows until the 2026-27 game launches[/yellow]"
         )
 
+    chip_sim = _load_chip_sim_report(processed, target_season, start_gw)
     as_of = dt.datetime.now(dt.UTC)
     with _capture_chip_curves() as captured:
         rec = plans.build_recommendation(
@@ -1442,6 +1504,7 @@ def run_optimize(
             stability_n=stability_n,
             run_chips=run_chips,
             run_stability=run_stability,
+            chip_sim=chip_sim,
         )
 
     # ---- artifacts (the API serves these files verbatim) -------------------------
@@ -1468,7 +1531,10 @@ def run_optimize(
         dream_path = out / "dream_team.json"
         dream_path.write_text(rec.dream_team.model_dump_json(indent=2))
         written.append(dream_path)
-    curves = captured.get("curves")
+    # chip_curves.parquet: the season-simulation v2 frame (full chip window + MC
+    # probability columns) when a fresh matching report exists, else the captured
+    # v1 forced-chip curves from build_recommendation's horizon re-solves.
+    curves = chip_sim.to_frame() if chip_sim is not None else captured.get("curves")
     if curves is not None and len(curves):
         curves_path = out / "chip_curves.parquet"
         curves.to_parquet(curves_path, index=False)
@@ -1479,6 +1545,197 @@ def run_optimize(
         "[bold]optimize[/bold]: wrote " + ", ".join(str(p) for p in written)
     )
     return rec
+
+
+# ---------------------------------------------------------------------------
+# simulate (stage 6: Monte Carlo season-simulation chip planner)
+# ---------------------------------------------------------------------------
+
+
+def run_simulate(
+    entry_id: int | None = None,
+    *,
+    rollouts: int = 1000,
+    seed: int = 0,
+    through_gw: int | None = None,
+    processed_dir: Path | None = None,
+    out_dir: Path | None = None,
+) -> Any:
+    """Run the Monte Carlo chip-timing simulation and persist its verdicts.
+
+    Runs :func:`fplai.optimizer.season_sim.simulate_chip_plans` over the FULL
+    remaining chip window (next GW .. ``through_gw``, default the window end from
+    ``rules.chip_windows`` — GW19 for set-1 chips), fixing the greedy
+    chip-within-horizon problem: every chip placement is priced against holding,
+    with rollout-level uncertainty from ``models.sampler.PointsSampler``.
+
+    Artifacts (``out_dir``, default the processed dir):
+
+    * ``chip_sim.parquet`` — the chip_curves-v2 frame (``ChipSimReport.to_frame()``).
+    * ``chip_sim_report.json`` — the full report; ``run_optimize`` folds it into
+      future recommendations while it stays fresh.
+    * ``chip_curves.parquet`` — overwritten with the v2 frame (the dashboard's
+      chip panel source; additive columns, v1 consumers keep working).
+    * ``recommendation.json`` — when present and targeting the same (season, GW),
+      its ``chip_advice``/rationale are re-verdicted via
+      :func:`fplai.optimizer.plans.apply_sim_to_recommendation`.
+
+    Args:
+        entry_id: FPL entry id (falls back to ``settings.entry_id``; unset ->
+            None-state initial-squad mode, matching ``run_optimize``).
+        rollouts: Monte Carlo rollouts (default 1000).
+        seed: Sampler seed (deterministic report for fixed inputs + seed).
+        through_gw: Last window GW (default: the current chip window's end).
+        processed_dir/out_dir: Input/output overrides.
+
+    Returns:
+        The :class:`~fplai.optimizer.season_sim.ChipSimReport`.
+
+    Raises:
+        FileNotFoundError: when predictions are missing.
+        ValueError: when predictions do not cover the window — run
+            ``fplai predict --through-gw N`` first.
+    """
+    import pandas as pd
+
+    from fplai import config
+    from fplai.models.sampler import chip_window_end
+    from fplai.optimizer import plans
+    from fplai.optimizer.season_sim import simulate_chip_plans
+
+    processed = Path(processed_dir) if processed_dir is not None else config.PROCESSED_DIR
+    out = Path(out_dir) if out_dir is not None else processed
+
+    fx_path = processed / "predictions.parquet"
+    gw_path = processed / "predictions_gw.parquet"
+    for path in (fx_path, gw_path):
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path} is missing — run `fplai predict --through-gw 19` first"
+            )
+    pred_fx = pd.read_parquet(fx_path)
+    pred_gw = pd.read_parquet(gw_path)
+    if pred_fx.empty or pred_gw.empty:
+        raise ValueError("predictions on disk are empty — re-run `fplai predict`")
+
+    target_season = int(pred_gw["season"].max())
+    start_gw = int(pred_gw.loc[pred_gw["season"] == target_season, "gw"].min())
+    resolved_entry = entry_id if entry_id is not None else (config.settings.entry_id or None)
+    state = _entry_state(int(resolved_entry), pred_gw) if resolved_entry else None
+    if state is not None:
+        target_season, start_gw = int(state.season), int(state.current_gw)
+
+    window_end = through_gw if through_gw is not None else chip_window_end(
+        target_season, start_gw
+    )
+    if window_end < start_gw:
+        raise ValueError(f"through_gw {window_end} is before the next GW {start_gw}")
+    window = range(start_gw, window_end + 1)
+
+    xp_win = pred_gw[
+        (pred_gw["season"] == target_season) & (pred_gw["gw"] >= start_gw)
+    ].copy()
+    prices = _optimizer_prices(xp_win, processed, target_season, start_gw, pred_fx)
+
+    state_desc = f"entry {resolved_entry}" if state is not None else "none (initial squad)"
+    console.print(
+        f"[bold]simulate[/bold]: season {target_season} chip window GWs "
+        f"{start_gw}-{window_end}, {rollouts:,} rollouts, seed {seed}, "
+        f"{len(prices):,} players, state: {state_desc}"
+    )
+
+    report = simulate_chip_plans(
+        pred_fx,
+        prices,
+        state,
+        window=window,
+        n_rollouts=rollouts,
+        seed=seed,
+    )
+
+    bq = report.backbone
+    console.print(
+        f"  backbone: objective {bq.objective:.1f}, gap {bq.gap:.2%}, "
+        f"{bq.solve_seconds:.0f}s ({bq.status}); {report.n_segment_solves} segment "
+        f"solves; appearance via {report.appearance_source}; "
+        f"total {report.sim_seconds:.0f}s"
+    )
+    from rich.table import Table
+
+    table = Table(title="chip verdicts (Monte Carlo)", title_justify="left")
+    for col in ("chip", "verdict now", "best GW", "E[gain]", "sd", "P(best)", "P(now beats hold)"):
+        table.add_column(col)
+    for v in report.verdicts:
+        now_stat = next(
+            (s for s in report.stats if s.chip == v.chip and s.gw == start_gw and s.evaluated),
+            None,
+        )
+        p_now = now_stat.p_beats_hold if now_stat is not None else None
+        table.add_row(
+            v.chip,
+            ("play" if p_now is not None and p_now > 0.5 else "hold")
+            if v.recommended_gw is not None
+            else "—",
+            str(v.recommended_gw) if v.recommended_gw is not None else "—",
+            f"{v.e_gain:+.1f}" if v.e_gain is not None else "—",
+            f"{v.sd:.1f}" if v.sd is not None else "—",
+            f"{v.confidence:.2f}" if v.confidence is not None else "—",
+            f"{p_now:.2f}" if p_now is not None else "—",
+        )
+    console.print(table)
+    if report.schedules:
+        top = report.schedules[0]
+        placed = ", ".join(f"{c}@GW{g}" for c, g in sorted(top.placements.items()))
+        console.print(
+            f"  best joint schedule: {placed or 'play nothing'} "
+            f"(E {top.e_total_gain:+.1f}, P(best) {top.p_best:.2f})"
+        )
+
+    # ---- artifacts -------------------------------------------------------------------
+    out.mkdir(parents=True, exist_ok=True)
+    frame = report.to_frame()
+    written = []
+    for name in ("chip_sim.parquet", "chip_curves.parquet"):
+        path = out / name
+        frame.to_parquet(path, index=False)
+        written.append(path)
+    report_path = out / "chip_sim_report.json"
+    report_path.write_text(report.model_dump_json(indent=1))
+    written.append(report_path)
+
+    # ---- fold the verdicts into an existing recommendation.json ----------------------
+    rec_path = out / "recommendation.json"
+    if rec_path.exists():
+        try:
+            raw = json.loads(rec_path.read_text())
+            wrapped = "recommendation" in raw and "entry_id" in raw
+            rec = plans.Recommendation.model_validate(
+                raw["recommendation"] if wrapped else raw
+            )
+            if int(rec.season) == target_season and int(rec.gw) == start_gw:
+                updated = plans.apply_sim_to_recommendation(rec, report)
+                if wrapped:
+                    raw["recommendation"] = json.loads(updated.model_dump_json())
+                    rec_path.write_text(json.dumps(raw, indent=2))
+                else:
+                    rec_path.write_text(updated.model_dump_json(indent=2))
+                written.append(rec_path)
+                console.print("  recommendation.json chip advice re-verdicted from the sim")
+            else:
+                console.print(
+                    f"  [yellow]recommendation.json targets season {rec.season} GW{rec.gw} "
+                    f"(sim: {target_season} GW{start_gw}) — not folding; re-run "
+                    "`fplai optimize`[/yellow]"
+                )
+        except Exception as exc:  # noqa: BLE001 - the sim artifacts stand on their own
+            console.print(
+                f"  [yellow]could not fold verdicts into recommendation.json: {exc}[/yellow]"
+            )
+
+    console.print(
+        "[bold]simulate[/bold]: wrote " + ", ".join(str(p) for p in written)
+    )
+    return report
 
 
 # ---------------------------------------------------------------------------

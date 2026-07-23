@@ -25,8 +25,11 @@ from fplai.optimizer.plans import (
     Recommendation,
     StabilityEntry,
     TransferPair,
+    build_chip_advice_from_sim,
     build_recommendation,
+    confidence_from_p_beats_hold,
     dream_team,
+    merge_chip_advice,
 )
 
 SEASON = 2026
@@ -316,6 +319,229 @@ class TestTransferDistillation:
         tc1 = next(a for a in rec.chip_advice if a.chip == "tc1")
         assert tc1.best_gw == GW
         assert tc1.best_ev == pytest.approx(4.2)
+
+
+# --------------------------------------------------------------------------------------
+# Chip advice v2: simulation overlay (duck-typed ChipSimReport — built in parallel)
+# --------------------------------------------------------------------------------------
+
+
+class StubSimReport:
+    """Duck-typed ChipSimReport per the ARCHITECTURE stage-6 contract.
+
+    ``to_frame()`` yields the chip_curves.parquet v2 shape (chip, gw,
+    delta_vs_no_chip + sd, p_best_week, p_beats_hold, n_rollouts); report-level
+    attributes carry current_gw / n_rollouts / assumptions.
+    """
+
+    def __init__(
+        self,
+        frame: pd.DataFrame,
+        *,
+        current_gw: int = GW,
+        n_rollouts: int = 1000,
+        assumptions: list[str] | None = None,
+    ) -> None:
+        self._frame = frame
+        self.current_gw = current_gw
+        self.n_rollouts = n_rollouts
+        self.assumptions = assumptions or [
+            "Predictions frozen at the last refresh",
+            "Autosubs and vice resolved per sampled season",
+        ]
+
+    def to_frame(self) -> pd.DataFrame:
+        return self._frame.copy()
+
+
+def make_sim_frame() -> pd.DataFrame:
+    """v2 frame over GWs 5-7: bb1 (hold, best window GW7) and tc1 (play now)."""
+    return pd.DataFrame(
+        {
+            "chip": ["bb1", "bb1", "bb1", "tc1", "tc1", "tc1"],
+            "gw": [GW, GW + 1, GW + 2, GW, GW + 1, GW + 2],
+            "delta_vs_no_chip": [1.2, 3.0, 6.8, 4.2, 3.1, 2.6],
+            "sd": [2.0, 2.2, 3.1, 1.8, 1.7, 1.6],
+            "p_best_week": [0.10, 0.20, 0.28, 0.44, 0.22, 0.18],
+            "p_beats_hold": [0.34, 0.48, 0.62, 0.72, 0.51, 0.40],
+            "n_rollouts": [1000] * 6,
+        }
+    )
+
+
+class TestChipAdviceFromSim:
+    def test_hold_chip_fields(self) -> None:
+        advice = build_chip_advice_from_sim(StubSimReport(make_sim_frame()))
+        assert [a.chip for a in advice] == ["bb1", "tc1"]
+        bb1 = advice[0]
+        assert bb1.verdict == "hold"  # p_beats_hold now = 0.34 <= 0.5
+        assert bb1.e_gain_now == pytest.approx(1.2)
+        assert bb1.ev_now == pytest.approx(1.2)  # pre-v2 field kept in sync
+        assert bb1.sd == pytest.approx(2.0)
+        assert bb1.p_best_week_now == pytest.approx(0.10)
+        assert bb1.p_beats_hold == pytest.approx(0.34)
+        assert bb1.recommended_gw == GW + 2  # argmax p_best_week
+        assert bb1.p_best_week_reco == pytest.approx(0.28)
+        assert bb1.confidence == "medium"  # |0.34 - 0.5| = 0.16
+        assert bb1.n_rollouts == 1000
+        assert bb1.assumptions is not None and len(bb1.assumptions) == 2
+        assert bb1.best_gw == GW + 2
+        assert bb1.best_ev == pytest.approx(6.8)
+        assert bb1.planned_gw is None
+
+    def test_play_chip_verdict(self) -> None:
+        advice = build_chip_advice_from_sim(StubSimReport(make_sim_frame()))
+        tc1 = advice[1]
+        assert tc1.verdict == "play"  # p_beats_hold now = 0.72 > 0.5
+        assert tc1.confidence == "high"  # |0.72 - 0.5| = 0.22
+        assert tc1.recommended_gw == GW  # argmax p_best_week is now
+        assert tc1.p_best_week_reco == pytest.approx(0.44)
+
+    def test_bare_frame_accepted(self) -> None:
+        """A raw v2 DataFrame works too — current GW defaults to the min GW."""
+        advice = build_chip_advice_from_sim(make_sim_frame())
+        bb1 = advice[0]
+        assert bb1.p_beats_hold == pytest.approx(0.34)
+        assert bb1.n_rollouts == 1000  # picked up from the frame column
+
+    def test_recommended_falls_back_to_gain(self) -> None:
+        frame = make_sim_frame().drop(columns=["p_best_week"])
+        advice = build_chip_advice_from_sim(StubSimReport(frame))
+        bb1 = advice[0]
+        assert bb1.recommended_gw == GW + 2  # argmax delta_vs_no_chip
+        assert bb1.p_best_week_reco is None
+
+    def test_missing_columns_raise(self) -> None:
+        with pytest.raises(ValueError, match="missing required column"):
+            build_chip_advice_from_sim(pd.DataFrame({"chip": ["bb1"]}))
+        with pytest.raises(TypeError, match="to_frame"):
+            build_chip_advice_from_sim(object())
+
+    def test_empty_frame_gives_no_advice(self) -> None:
+        frame = make_sim_frame().iloc[0:0]
+        assert build_chip_advice_from_sim(StubSimReport(frame)) == []
+
+    def test_confidence_bands(self) -> None:
+        assert confidence_from_p_beats_hold(0.72) == "high"
+        assert confidence_from_p_beats_hold(0.30) == "high"
+        assert confidence_from_p_beats_hold(0.34) == "medium"
+        assert confidence_from_p_beats_hold(0.62) == "medium"
+        assert confidence_from_p_beats_hold(0.55) == "low"
+        assert confidence_from_p_beats_hold(0.50) == "low"
+
+    def test_sim_advice_round_trips(self) -> None:
+        for advice in build_chip_advice_from_sim(StubSimReport(make_sim_frame())):
+            assert ChipAdvice.model_validate_json(advice.model_dump_json()) == advice
+
+    def test_report_verdicts_and_window_first_gw_honored(self) -> None:
+        """The real ChipSimReport surface: window_first_gw + per-chip verdict objects
+        (recommended_gw; float confidence = p_best_week at that GW) take precedence."""
+
+        @dataclass
+        class FakeVerdict:
+            chip: str
+            recommended_gw: int | None
+            confidence: float | None = None
+
+        @dataclass
+        class FakeReport:
+            frame: pd.DataFrame
+            window_first_gw: int = GW
+            n_rollouts: int = 500
+            assumptions: tuple[str, ...] = ("Backbone squad frozen over the window",)
+            verdicts: tuple[FakeVerdict, ...] = ()
+
+            def to_frame(self) -> pd.DataFrame:
+                return self.frame
+
+        frame = make_sim_frame().drop(columns=["n_rollouts"])
+        report = FakeReport(
+            frame,
+            verdicts=(FakeVerdict("bb1", GW + 1, 0.20), FakeVerdict("tc1", None)),
+        )
+        advice = build_chip_advice_from_sim(report)
+        bb1, tc1 = advice
+        assert bb1.recommended_gw == GW + 1  # report verdict beats the argmax (GW+2)
+        assert bb1.p_best_week_reco == pytest.approx(0.20)  # frame value at GW+1
+        assert bb1.n_rollouts == 500  # report attr when the column is absent
+        assert bb1.assumptions == ["Backbone squad frozen over the window"]
+        assert bb1.p_beats_hold == pytest.approx(0.34)  # at window_first_gw
+        assert tc1.recommended_gw == GW  # None in the verdict -> argmax p_best_week
+
+
+class TestMergeChipAdvice:
+    def _base(self) -> list[ChipAdvice]:
+        return [
+            ChipAdvice(chip="wc1", verdict="hold", best_gw=GW + 1, best_ev=4.1),
+            ChipAdvice(chip="bb1", verdict="play", planned_gw=GW, ev_now=1.2),
+        ]
+
+    def test_overlay_and_verdict_override(self) -> None:
+        sim = build_chip_advice_from_sim(StubSimReport(make_sim_frame()))
+        merged = merge_chip_advice(self._base(), sim)
+        assert [a.chip for a in merged] == ["wc1", "bb1"]  # base order + membership
+        wc1, bb1 = merged
+        # wc1 has no sim entry: untouched
+        assert wc1.p_beats_hold is None
+        assert wc1.best_ev == pytest.approx(4.1)
+        # bb1: sim verdict wins (greedy plan said play, sim says hold), fields overlaid
+        assert bb1.verdict == "hold"
+        assert bb1.planned_gw == GW  # the plan's schedule is preserved
+        assert bb1.p_beats_hold == pytest.approx(0.34)
+        assert bb1.recommended_gw == GW + 2
+        assert bb1.confidence == "medium"
+        assert bb1.ev_now == pytest.approx(1.2)  # sim e_gain matches; still filled
+        assert bb1.best_gw == GW + 2
+
+    def test_sim_only_chips_are_not_added(self) -> None:
+        sim = build_chip_advice_from_sim(StubSimReport(make_sim_frame()))
+        merged = merge_chip_advice([self._base()[0]], sim)  # wc1 only
+        assert [a.chip for a in merged] == ["wc1"]
+
+
+class TestBuildRecommendationWithSim:
+    def test_chip_sim_hook_folds_into_advice_and_rationale(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _patch(monkeypatch, TRANSFER_PLAN)
+        rec = build_recommendation(
+            FakeState(),
+            make_xp(),
+            make_prices(),
+            as_of=AS_OF,
+            horizon=3,
+            chip_sim=StubSimReport(make_sim_frame()),
+        )
+        bb1 = next(a for a in rec.chip_advice if a.chip == "bb1")
+        assert bb1.p_beats_hold == pytest.approx(0.34)
+        assert bb1.confidence == "medium"
+        assert bb1.n_rollouts == 1000
+        tc1 = next(a for a in rec.chip_advice if a.chip == "tc1")
+        assert tc1.verdict == "play"
+        # chips without sim rows keep their EV-only advice
+        wc1 = next(a for a in rec.chip_advice if a.chip == "wc1")
+        assert wc1.p_beats_hold is None
+        text = " | ".join(rec.rationale)
+        assert (
+            "Bench Boost (bb1) now beats holding in 34% of 1,000 simulated seasons "
+            f"— hold; best window GW{GW + 2} (P(best)=0.28)." in text
+        )
+        assert (
+            "Triple Captain (tc1) now beats holding in 72% of 1,000 simulated "
+            f"seasons — play; best window GW{GW} (P(best)=0.44)." in text
+        )
+        # the whole thing still serializes and round-trips
+        restored = Recommendation.model_validate_json(rec.model_dump_json())
+        assert restored == rec
+
+    def test_without_sim_nothing_changes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _patch(monkeypatch, TRANSFER_PLAN)
+        rec = build_recommendation(
+            FakeState(), make_xp(), make_prices(), as_of=AS_OF, horizon=3
+        )
+        assert all(a.p_beats_hold is None for a in rec.chip_advice)
+        assert all(a.assumptions is None for a in rec.chip_advice)
+        assert "simulated seasons" not in " | ".join(rec.rationale)
 
 
 # --------------------------------------------------------------------------------------

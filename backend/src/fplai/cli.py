@@ -2,7 +2,8 @@
 
 Thin typer wrappers over :mod:`fplai.pipeline`: data commands (snapshot,
 backfill, build, refresh), model commands (train, predict), the optimizer
-(optimize) and the walk-forward backtest harness (backtest).
+(optimize), the Monte Carlo chip-timing simulation (simulate) and the
+walk-forward backtest harness (backtest).
 """
 
 from typing import Annotated
@@ -102,6 +103,14 @@ def predict(
     horizon: Annotated[
         int | None, typer.Option(help="Number of GWs to predict (default: settings).")
     ] = None,
+    through_gw: Annotated[
+        int | None,
+        typer.Option(
+            "--through-gw",
+            help="Live mode: predict every GW through this one inclusive (e.g. 19 = the "
+            "set-1 chip window end, what `fplai simulate` needs). Excludes --horizon.",
+        ),
+    ] = None,
     no_odds: Annotated[
         bool, typer.Option("--no-odds", help="Skip the bookmaker-odds blend.")
     ] = False,
@@ -111,7 +120,12 @@ def predict(
 
     if (season is None) != (gw is None):
         raise typer.BadParameter("--season and --gw must be given together")
-    run_predict(season, gw, horizon=horizon, use_odds=not no_odds)
+    try:
+        run_predict(
+            season, gw, horizon=horizon, through_gw=through_gw, use_odds=not no_odds
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command()
@@ -170,6 +184,44 @@ def optimize(
         )
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]optimize failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command()
+def simulate(
+    entry_id: Annotated[
+        int | None,
+        typer.Option(
+            "--entry-id",
+            help="FPL entry (team) id to simulate for; default FPLAI_ENTRY_ID from .env. "
+            "Unset -> None-state initial-squad mode.",
+        ),
+    ] = None,
+    rollouts: Annotated[
+        int, typer.Option("--rollouts", help="Monte Carlo rollouts (default 1000).")
+    ] = 1000,
+    seed: Annotated[int, typer.Option(help="Sampler seed (deterministic report).")] = 0,
+    through_gw: Annotated[
+        int | None,
+        typer.Option(
+            "--through-gw",
+            help="Last window GW (default: the current chip window's end, e.g. 19). "
+            "Predictions must cover it — run `fplai predict --through-gw` first.",
+        ),
+    ] = None,
+) -> None:
+    """Monte Carlo chip-timing simulation over the full chip window (stage 6).
+
+    Writes chip_sim.parquet + chip_sim_report.json, refreshes chip_curves.parquet
+    with the v2 probability columns and re-verdicts recommendation.json's chip
+    advice (play/hold with quantified hold value).
+    """
+    from fplai.pipeline import run_simulate
+
+    try:
+        run_simulate(entry_id, rollouts=rollouts, seed=seed, through_gw=through_gw)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]simulate failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 

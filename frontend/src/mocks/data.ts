@@ -861,12 +861,72 @@ const STABILITY: StabilityEntry[] = [
   { move: `buy:${P("Mateta").player_code}`, support_pct: 10.0 },
 ];
 
+/** Shared season-simulation assumptions (rendered as the planner's muted footnote). */
+const SIM_ASSUMPTIONS: string[] = [
+  "1,000 season rollouts, fixed seed",
+  "Set-2 chips must be played by GW38",
+  "Bonus sampled from the expected-BPS rank approximation",
+];
+
+/**
+ * Per-chip season-simulation curves (chip_curves v2 columns), aligned to DEMO_GWS.
+ * `delta` = E[gain] vs no chip, `sd` its rollout spread, `pBest` = P(that GW is the
+ * chip's best week), `pBeatsHold` = P(playing that GW beats holding).
+ */
+const CHIP_SIM: Record<
+  string,
+  { delta: number[]; sd: number[]; pBest: number[]; pBeatsHold: number[] }
+> = {
+  wc2: {
+    delta: [2.2, 3.1, 2.4, 2.9, 1.8],
+    sd: [1.6, 1.7, 1.9, 2.0, 2.2],
+    pBest: [0.2, 0.31, 0.15, 0.22, 0.12],
+    pBeatsHold: [0.33, 0.46, 0.31, 0.38, 0.24],
+  },
+  bb2: {
+    delta: [2.1, 2.8, 3.4, 8.2, 4.6],
+    sd: [1.8, 1.9, 2.1, 3.4, 2.6],
+    pBest: [0.05, 0.08, 0.12, 0.52, 0.23],
+    pBeatsHold: [0.18, 0.24, 0.31, 0.79, 0.47],
+  },
+  tc2: {
+    delta: [3.1, 2.4, 2.9, 4.4, 3.3],
+    sd: [2.2, 2.0, 2.1, 2.7, 2.3],
+    pBest: [0.24, 0.11, 0.16, 0.31, 0.18],
+    pBeatsHold: [0.42, 0.34, 0.38, 0.56, 0.41],
+  },
+};
+
+const SIM_ROLLOUTS = 1000;
+
+/** Sim-derived ChipAdvice for one chip (mirrors plans.build_chip_advice_from_sim). */
+function simAdvice(chip: string, planned_gw: number | null): ChipAdvice {
+  const sim = CHIP_SIM[chip];
+  const bestI = sim.delta.reduce((acc, v, i) => (v > sim.delta[acc] ? i : acc), 0);
+  const recoI = sim.pBest.reduce((acc, v, i) => (v > sim.pBest[acc] ? i : acc), 0);
+  const pNow = sim.pBeatsHold[0];
+  const margin = Math.abs(pNow - 0.5);
+  return {
+    chip,
+    verdict: pNow > 0.5 ? "play" : "hold",
+    planned_gw,
+    ev_now: sim.delta[0],
+    best_gw: DEMO_GWS[bestI],
+    best_ev: sim.delta[bestI],
+    e_gain_now: sim.delta[0],
+    sd: sim.sd[0],
+    p_best_week_now: sim.pBest[0],
+    p_beats_hold: pNow,
+    recommended_gw: DEMO_GWS[recoI],
+    p_best_week_reco: sim.pBest[recoI],
+    confidence: margin >= 0.2 ? "high" : margin >= 0.1 ? "medium" : "low",
+    n_rollouts: SIM_ROLLOUTS,
+    assumptions: SIM_ASSUMPTIONS,
+  };
+}
+
 function chipAdviceList(): ChipAdvice[] {
-  return [
-    { chip: "wc2", verdict: "hold", planned_gw: null, ev_now: 2.2, best_gw: 35, best_ev: 3.1 },
-    { chip: "bb2", verdict: "hold", planned_gw: 37, ev_now: 2.1, best_gw: 37, best_ev: 8.2 },
-    { chip: "tc2", verdict: "hold", planned_gw: null, ev_now: 3.1, best_gw: 37, best_ev: 4.4 },
-  ];
+  return [simAdvice("wc2", null), simAdvice("bb2", 37), simAdvice("tc2", null)];
 }
 
 let _reco: Recommendation | null = null;
@@ -920,7 +980,9 @@ export function myTeamRecommendation(): Recommendation {
     rationale: [
       `Bring in Solanke (${in3.toFixed(1)} xP/GW next 3) for Evanilson (q0 55%, availability risk): +${delta.toFixed(1)} xP over the horizon, 87% of noise re-solves agree.`,
       `Captain M.Salah (${capXp.toFixed(1)} xP this GW); vice B.Fernandes (captain q0 4%).`,
-      `Best future chip window: Bench Boost (bb2) in GW37 (+8.2 xP vs no chip) — hold for now.`,
+      `Wildcard (wc2) now beats holding in 33% of 1,000 simulated seasons — hold; best window GW35 (P(best)=0.31).`,
+      `Bench Boost (bb2) now beats holding in 18% of 1,000 simulated seasons — hold; best window GW37 (P(best)=0.52).`,
+      `Triple Captain (tc2) now beats holding in 42% of 1,000 simulated seasons — hold; best window GW37 (P(best)=0.31).`,
       `Fresh-£100m benchmark: ${dream.expected_points.toFixed(1)} xP this GW vs your ${g34.expected_points.toFixed(1)} (${gap >= 0 ? "+" : ""}${gap.toFixed(1)}).`,
       `Stability: 88% of noise re-solves agree with this GW's moves.`,
     ],
@@ -989,7 +1051,7 @@ export function initialSquadRecommendation(): Recommendation {
     rationale: [
       `Initial squad for GW${DEMO_GW}: 15 players, £${(spent / 10).toFixed(1)}m spent, £${(bank / 10).toFixed(1)}m in the bank; expected ${dream.expected_points.toFixed(1)} xP in GW${DEMO_GW}.`,
       `Captain ${capName} (${xpOf.get(dream.captain!)!.toFixed(1)} xP this GW); vice ${byCode.get(dream.vice!)!.web_name}.`,
-      `Best future chip window: Bench Boost (bb2) in GW37 (+8.2 xP vs no chip) — hold for now.`,
+      `Bench Boost (bb2) now beats holding in 18% of 1,000 simulated seasons — hold; best window GW37 (P(best)=0.52).`,
       `Demo mode: 2025-26 GW${DEMO_GW} backtest data — the 2026-27 game has not launched yet.`,
     ],
   };
@@ -1004,26 +1066,25 @@ export function myTeamResponse(entryId: number): MyTeamResponse {
 // chip EV curves (chips.chip_ev_curves rows)
 // ---------------------------------------------------------------------------
 
-const CHIP_DELTAS: Record<string, number[]> = {
-  wc2: [2.2, 3.1, 2.4, 2.9, 1.8],
-  bb2: [2.1, 2.8, 3.4, 8.2, 4.6],
-  tc2: [3.1, 2.4, 2.9, 4.4, 3.3],
-};
-
 export function chipCurvesResponse(entryId: number | null): ChipCurvesResponse {
   const baseline = planResult().objective;
   const curves: ChipCurvePoint[] = [];
-  for (const [chip, deltas] of Object.entries(CHIP_DELTAS)) {
+  for (const [chip, sim] of Object.entries(CHIP_SIM)) {
     DEMO_GWS.forEach((gw, i) => {
       curves.push({
         chip,
         gw,
-        objective: round2(baseline + deltas[i]),
-        delta_vs_no_chip: deltas[i],
+        objective: round2(baseline + sim.delta[i]),
+        delta_vs_no_chip: sim.delta[i],
         evaluated: true,
         skip_reason: null,
         window_last_gw: 38,
         urgency: round2((i + 1) / DEMO_GWS.length),
+        // season-simulation v2 columns
+        sd: sim.sd[i],
+        p_best_week: sim.pBest[i],
+        p_beats_hold: sim.pBeatsHold[i],
+        n_rollouts: SIM_ROLLOUTS,
       });
     });
   }

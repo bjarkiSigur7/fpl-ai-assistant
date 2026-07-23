@@ -96,6 +96,17 @@ export interface ChipAdvice {
   ev_now: number | null;
   best_gw: number | null;
   best_ev: number | null;
+  /** Season-simulation fields (plans.py v2) — null until `fplai simulate` has run. */
+  e_gain_now?: number | null;
+  sd?: number | null;
+  p_best_week_now?: number | null;
+  p_beats_hold?: number | null;
+  recommended_gw?: number | null;
+  p_best_week_reco?: number | null;
+  /** "high" | "medium" | "low", derived from p_beats_hold bands. */
+  confidence?: string | null;
+  n_rollouts?: number | null;
+  assumptions?: string[] | null;
 }
 
 export interface DreamTeam {
@@ -494,7 +505,7 @@ export interface MyTeamResponse {
   recommendation: Recommendation;
 }
 
-/** chips.chip_ev_curves rows verbatim (schemas.ChipCurvePoint). */
+/** chips.chip_ev_curves rows verbatim (schemas.ChipCurvePoint, v1 + sim v2). */
 export interface ChipCurvePoint {
   chip: ChipId;
   gw: number;
@@ -504,6 +515,11 @@ export interface ChipCurvePoint {
   skip_reason?: string | null;
   window_last_gw?: number | null;
   urgency?: number | null;
+  /** Season-simulation v2 columns — null when chip_curves.parquet predates the sim. */
+  sd?: number | null;
+  p_best_week?: number | null;
+  p_beats_hold?: number | null;
+  n_rollouts?: number | null;
 }
 
 export interface ChipCurvesResponse {

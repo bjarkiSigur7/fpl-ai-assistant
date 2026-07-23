@@ -3,7 +3,7 @@
 # predict/optimize demo window defaults to 2025-26 GW34 — override with SEASON/GW/GWS,
 # e.g. `make demo GW=30` or `make backtest GWS=30..38`.
 
-.PHONY: refresh train predict optimize demo backtest api web dev test test-live lint
+.PHONY: refresh train predict optimize simulate demo backtest api web dev test test-live lint
 
 SEASON ?= 2025
 GW ?= 34
@@ -23,6 +23,11 @@ predict:
 
 optimize:
 	cd backend && uv run fplai optimize
+
+# Monte Carlo chip-timing simulation over the full chip window (needs
+# `fplai predict --through-gw 19` coverage; refresh handles both automatically)
+simulate:
+	cd backend && uv run fplai simulate
 
 # Pre-launch demo chain: predict + optimize the SEASON/GW backtest window
 demo:

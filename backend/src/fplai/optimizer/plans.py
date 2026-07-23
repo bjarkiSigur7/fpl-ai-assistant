@@ -46,14 +46,19 @@ if TYPE_CHECKING:  # pragma: no cover — sibling module is built in parallel
 
 __all__ = [
     "CHIP_NAMES",
+    "CONFIDENCE_BANDS",
     "ChipAdvice",
     "DreamTeam",
     "Recommendation",
     "StabilityEntry",
     "TransferPair",
+    "apply_sim_to_recommendation",
+    "build_chip_advice_from_sim",
     "build_recommendation",
     "chip_ev_curves",
+    "confidence_from_p_beats_hold",
     "dream_team",
+    "merge_chip_advice",
     "plan_stability",
     "solve_plan",
 ]
@@ -120,7 +125,14 @@ class TransferPair(BaseModel):
 
 
 class ChipAdvice(BaseModel):
-    """Play/hold verdict for one available chip instance, with EV context."""
+    """Play/hold verdict for one available chip instance, with EV context.
+
+    The simulation block (``e_gain_now`` … ``assumptions``) is populated only after a
+    Monte Carlo season simulation has run (the ``optimizer/season_sim`` stage-6
+    contract — see :func:`build_chip_advice_from_sim`). Every simulation field is
+    Optional and defaults to ``None``, so pre-simulation flows and artifacts on disk
+    stay valid unchanged.
+    """
 
     chip: str  # chip id, e.g. "bb1"
     verdict: Literal["play", "hold"]
@@ -128,6 +140,16 @@ class ChipAdvice(BaseModel):
     ev_now: float | None = None  # delta_vs_no_chip if forced this GW
     best_gw: int | None = None  # best GW for this chip within the horizon
     best_ev: float | None = None  # delta_vs_no_chip at best_gw
+    # --- season-simulation fields (None until `fplai simulate` has run) ------------
+    e_gain_now: float | None = None  # E[gain] if played this GW (simulation mean)
+    sd: float | None = None  # sd of that gain across rollouts
+    p_best_week_now: float | None = None  # P(this GW is the chip's best week)
+    p_beats_hold: float | None = None  # P(playing now beats holding the chip)
+    recommended_gw: int | None = None  # simulation-recommended GW to play the chip
+    p_best_week_reco: float | None = None  # P(recommended_gw is the best week)
+    confidence: str | None = None  # "high" | "medium" | "low" (p_beats_hold bands)
+    n_rollouts: int | None = None  # simulated seasons behind these numbers
+    assumptions: list[str] | None = None  # simulation assumptions, human-readable
 
 
 class DreamTeam(BaseModel):
@@ -519,6 +541,242 @@ def _chip_advice(
 
 
 # --------------------------------------------------------------------------------------
+# Chip advice v2: Monte Carlo season-simulation overlay (optimizer/season_sim contract)
+# --------------------------------------------------------------------------------------
+
+#: Confidence bands on |p_beats_hold - 0.5| (distance from a coin flip):
+#: >= 0.20 -> "high", >= 0.10 -> "medium", else "low".
+CONFIDENCE_BANDS: tuple[tuple[float, str], ...] = ((0.20, "high"), (0.10, "medium"))
+
+#: Gain-column aliases accepted in a ChipSimReport frame, in preference order.
+_SIM_GAIN_COLUMNS: tuple[str, ...] = ("delta_vs_no_chip", "e_gain", "gain")
+
+#: ChipAdvice fields owned by the simulation (copied wholesale on merge).
+_SIM_ADVICE_FIELDS: tuple[str, ...] = (
+    "e_gain_now",
+    "sd",
+    "p_best_week_now",
+    "p_beats_hold",
+    "recommended_gw",
+    "p_best_week_reco",
+    "confidence",
+    "n_rollouts",
+    "assumptions",
+)
+
+
+def confidence_from_p_beats_hold(p_beats_hold: float) -> str:
+    """Confidence wording for a play/hold verdict from P(playing now beats holding).
+
+    The verdict is decisive when the probability sits far from 0.5 in either
+    direction (a confident *hold* is a low probability): the :data:`CONFIDENCE_BANDS`
+    thresholds on ``|p - 0.5|`` give ``"high"`` / ``"medium"`` / ``"low"``.
+    """
+    margin = abs(p_beats_hold - 0.5)
+    for threshold, label in CONFIDENCE_BANDS:
+        if margin >= threshold:
+            return label
+    return "low"
+
+
+def _sim_frame(report: Any) -> pd.DataFrame:
+    """The per-(chip, gw) frame behind a ChipSimReport-shaped object (duck-typed)."""
+    frame = report
+    to_frame = getattr(report, "to_frame", None)
+    if callable(to_frame):
+        frame = to_frame()
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError(
+            "chip-sim report must be a DataFrame or expose to_frame() -> DataFrame, "
+            f"got {type(report).__name__}"
+        )
+    missing = [col for col in ("chip", "gw") if col not in frame.columns]
+    if missing:
+        raise ValueError(f"chip-sim frame missing required column(s) {missing}")
+    return frame
+
+
+def build_chip_advice_from_sim(report: Any) -> list[ChipAdvice]:
+    """Distill a season-simulation report into per-chip :class:`ChipAdvice` (v2).
+
+    Duck-typed against the ``optimizer/season_sim`` stage-6 contract
+    (``ChipSimReport``): ``report`` either *is* the chip-curves v2 frame or exposes
+    ``.to_frame()`` returning one — columns ``chip``, ``gw``, a gain column
+    (``delta_vs_no_chip`` preferred; ``e_gain``/``gain`` accepted) and the nullable
+    v2 additions ``sd``, ``p_best_week``, ``p_beats_hold``, ``n_rollouts``.
+    Report-level attributes are used when present: ``current_gw`` /
+    ``window_first_gw`` (defaults to the frame's min GW), ``n_rollouts``,
+    ``assumptions`` and per-chip ``verdicts`` entries (objects with ``chip``,
+    ``recommended_gw`` and a float ``confidence`` = P(best week) at the recommended
+    GW); per-row ``recommended_gw`` / ``confidence`` columns are honored too.
+
+    Per chip: ``verdict`` is ``"play"`` iff P(playing now beats holding) > 0.5;
+    ``recommended_gw`` comes from the report's verdicts when given, else the argmax
+    of ``p_best_week`` (falling back to the gain curve; earliest GW wins ties);
+    ``confidence`` (the string band) comes from :func:`confidence_from_p_beats_hold`.
+    ``ev_now``/``best_gw``/``best_ev`` are filled from the gain curve so pre-v2
+    consumers keep working.
+    """
+    frame = _sim_frame(report)
+    if len(frame) == 0:
+        return []
+    gain_col = next((c for c in _SIM_GAIN_COLUMNS if c in frame.columns), None)
+
+    now_raw = _get(report, "current_gw")
+    if now_raw is None:
+        now_raw = _get(report, "window_first_gw")
+    now = int(now_raw) if now_raw is not None else int(frame["gw"].min())
+    report_rollouts = _get(report, "n_rollouts")
+    assumptions_raw = _get(report, "assumptions")
+    assumptions = [str(a) for a in assumptions_raw] if assumptions_raw else None
+    verdict_by_chip: dict[str, Any] = {}
+    for entry in _get(report, "verdicts") or []:
+        chip_id = _get(entry, "chip")
+        if chip_id is not None:
+            verdict_by_chip[str(chip_id)] = entry
+
+    advice: list[ChipAdvice] = []
+    for cid in dict.fromkeys(str(c) for c in frame["chip"]):  # first-seen chip order
+        sub = frame.loc[frame["chip"].astype(str) == cid].sort_values("gw", kind="stable")
+
+        def _at(col: str, gw: int | None, sub: pd.DataFrame = sub) -> float | None:
+            if gw is None or col not in sub.columns:
+                return None
+            vals = sub.loc[sub["gw"] == gw, col].dropna()
+            return float(vals.iloc[0]) if len(vals) else None
+
+        def _argmax_gw(col: str | None, sub: pd.DataFrame = sub) -> int | None:
+            if col is None or col not in sub.columns:
+                return None
+            vals = sub[col].astype(float)
+            if not vals.notna().any():
+                return None
+            return int(sub.loc[vals.idxmax(), "gw"])  # stable sort -> earliest tie wins
+
+        best_gw = _argmax_gw(gain_col)
+        best_ev = _at(gain_col, best_gw) if gain_col is not None else None
+
+        report_verdict = verdict_by_chip.get(cid)
+        reco_raw = (
+            _get(report_verdict, "recommended_gw") if report_verdict is not None else None
+        )
+        reco_col = sub["recommended_gw"].dropna() if "recommended_gw" in sub.columns else None
+        if reco_raw is not None:
+            recommended_gw: int | None = int(reco_raw)
+        elif reco_col is not None and len(reco_col):
+            recommended_gw = int(reco_col.iloc[0])
+        else:
+            recommended_gw = _argmax_gw("p_best_week")
+            if recommended_gw is None:
+                recommended_gw = best_gw
+
+        p_now = _at("p_beats_hold", now)
+        conf_col = sub["confidence"].dropna() if "confidence" in sub.columns else None
+        if conf_col is not None and len(conf_col):
+            confidence: str | None = str(conf_col.iloc[0])
+        else:
+            confidence = confidence_from_p_beats_hold(p_now) if p_now is not None else None
+
+        rollouts_val = _at("n_rollouts", now)
+        if rollouts_val is None and "n_rollouts" in sub.columns:
+            col_vals = sub["n_rollouts"].dropna()
+            rollouts_val = float(col_vals.iloc[0]) if len(col_vals) else None
+        if rollouts_val is None and report_rollouts is not None:
+            rollouts_val = float(report_rollouts)
+
+        p_best_reco = _at("p_best_week", recommended_gw)
+        if p_best_reco is None and report_verdict is not None:
+            # season_sim's ChipVerdict.confidence IS p_best_week at the recommended GW
+            conf_val = _get(report_verdict, "confidence")
+            if isinstance(conf_val, (int, float)):
+                p_best_reco = float(conf_val)
+
+        e_gain_now = _at(gain_col, now) if gain_col is not None else None
+        advice.append(
+            ChipAdvice(
+                chip=cid,
+                verdict="play" if p_now is not None and p_now > 0.5 else "hold",
+                planned_gw=None,  # the MILP plan's schedule is merged in separately
+                ev_now=e_gain_now,
+                best_gw=best_gw,
+                best_ev=best_ev,
+                e_gain_now=e_gain_now,
+                sd=_at("sd", now),
+                p_best_week_now=_at("p_best_week", now),
+                p_beats_hold=p_now,
+                recommended_gw=recommended_gw,
+                p_best_week_reco=p_best_reco,
+                confidence=confidence,
+                n_rollouts=int(rollouts_val) if rollouts_val is not None else None,
+                assumptions=assumptions,
+            )
+        )
+    return advice
+
+
+def merge_chip_advice(
+    base: Sequence[ChipAdvice], sim: Sequence[ChipAdvice]
+) -> list[ChipAdvice]:
+    """Overlay simulation-derived advice onto plan-derived advice, chip by chip.
+
+    ``base`` (from :func:`_chip_advice` — the squad state's chip inventory) fixes
+    membership and order. For chips also present in ``sim`` the simulation fields
+    are copied over and the simulation *verdict* wins — it prices opportunity cost
+    over the full chip window, which the greedy within-horizon MILP cannot.
+    ``planned_gw`` and the forced-resolve EV numbers are kept from ``base`` unless
+    the simulation supplies its own.
+    """
+    sim_by_chip = {a.chip: a for a in sim}
+    merged: list[ChipAdvice] = []
+    for entry in base:
+        sim_entry = sim_by_chip.get(entry.chip)
+        if sim_entry is None:
+            merged.append(entry)
+            continue
+        update: dict[str, Any] = {
+            name: getattr(sim_entry, name)
+            for name in _SIM_ADVICE_FIELDS
+            if getattr(sim_entry, name) is not None
+        }
+        update["verdict"] = sim_entry.verdict
+        if sim_entry.ev_now is not None:
+            update["ev_now"] = sim_entry.ev_now
+        if sim_entry.best_gw is not None:
+            update["best_gw"] = sim_entry.best_gw
+            update["best_ev"] = sim_entry.best_ev
+        merged.append(entry.model_copy(update=update))
+    return merged
+
+
+def apply_sim_to_recommendation(rec: Recommendation, chip_sim: Any) -> Recommendation:
+    """Fold season-simulation verdicts into an already-built :class:`Recommendation`.
+
+    The post-hoc counterpart of ``build_recommendation(..., chip_sim=)`` for the
+    pipeline's ``fplai simulate`` stage, which runs *after* ``optimize`` has written
+    ``recommendation.json``: chip advice is merged per :func:`merge_chip_advice` (the
+    simulation verdict wins) and the rationale's chip bullets are replaced by the
+    probability-speaking simulation bullets. Everything else (plan, transfers,
+    captaincy, stability) is untouched — the simulation re-verdicts chips only.
+    """
+    sim_advice = build_chip_advice_from_sim(chip_sim)
+    if not sim_advice:
+        return rec
+    merged = merge_chip_advice(rec.chip_advice, sim_advice)
+    # Replace the chip-speaking bullets (the held-chip EV-window bullet and any stale
+    # simulation bullets from a previous fold) with fresh probability bullets; the
+    # action/transfer/captain bullets stay — same shape build_recommendation(chip_sim=)
+    # produces, and idempotent across repeated simulate runs.
+    rationale = [
+        bullet
+        for bullet in rec.rationale
+        if not bullet.startswith("Best future chip window:")
+        and " now beats holding in " not in bullet
+    ]
+    rationale.extend(_sim_chip_bullet(a) for a in merged if a.p_beats_hold is not None)
+    return rec.model_copy(update={"chip_advice": merged, "rationale": rationale})
+
+
+# --------------------------------------------------------------------------------------
 # Rationale (template-generated from the numbers; no LLM)
 # --------------------------------------------------------------------------------------
 
@@ -540,6 +798,26 @@ def _transfer_bullet(pair: TransferPair, window: pd.DataFrame, gw: int) -> str:
         text = f"Bring in {in_part} for {out_part}: {pair.xp_delta:+.1f} xP over the horizon"
     if pair.support_pct is not None:
         text += f", {pair.support_pct:.0f}% of noise re-solves agree"
+    return text + "."
+
+
+def _sim_chip_bullet(advice: ChipAdvice) -> str:
+    """Probability-speaking chip bullet when simulation data is present.
+
+    Example: ``"Bench Boost (bb1) now beats holding in 34% of 1,000 simulated
+    seasons — hold; best window GW7 (P(best)=0.28)."``
+    """
+    assert advice.p_beats_hold is not None  # caller filters on this
+    seasons = f"{advice.n_rollouts:,}" if advice.n_rollouts else "the"
+    text = (
+        f"{_chip_name(advice.chip)} ({advice.chip}) now beats holding in "
+        f"{advice.p_beats_hold * 100:.0f}% of {seasons} simulated seasons — "
+        f"{advice.verdict}"
+    )
+    if advice.recommended_gw is not None:
+        text += f"; best window GW{advice.recommended_gw}"
+        if advice.p_best_week_reco is not None:
+            text += f" (P(best)={advice.p_best_week_reco:.2f})"
     return text + "."
 
 
@@ -619,11 +897,18 @@ def _build_rationale(
                 text += f" (captain q0 {captain_q0 * 100:.0f}%)"
         bullets.append(text + ".")
 
+    # Simulation-backed chips speak probability; the rest keep the EV-window bullet.
+    sim_backed = [a for a in advice if a.p_beats_hold is not None]
+    bullets.extend(_sim_chip_bullet(a) for a in sim_backed)
+
     if not action.startswith("chip:"):
         held = [
             a
             for a in advice
-            if a.verdict == "hold" and a.best_ev is not None and a.best_ev > 0
+            if a.p_beats_hold is None
+            and a.verdict == "hold"
+            and a.best_ev is not None
+            and a.best_ev > 0
         ]
         if held:
             best = max(held, key=lambda a: a.best_ev or 0.0)
@@ -675,6 +960,7 @@ def build_recommendation(
     stability_seed: int = 0,
     run_chips: bool = True,
     run_stability: bool = True,
+    chip_sim: Any | None = None,
 ) -> Recommendation:
     """Build the weekly verdict for a user squad state (or the initial-squad product).
 
@@ -693,6 +979,13 @@ def build_recommendation(
     never reads the clock). ``run_chips`` / ``run_stability`` let callers skip the
     chip-curve and noise re-solves for speed; ``params`` is forwarded to
     ``solve_plan`` untouched when provided.
+
+    ``chip_sim`` is the season-simulation integration hook: pass a
+    ``ChipSimReport``-shaped object (or its v2 frame) from
+    ``optimizer.season_sim.simulate_chip_plans`` and the simulation verdicts,
+    uncertainty and confidence are folded into ``chip_advice`` (via
+    :func:`build_chip_advice_from_sim` + :func:`merge_chip_advice`) and the chip
+    rationale speaks simulation probability instead of raw point deltas.
     """
     if horizon < 1:
         raise ValueError(f"horizon must be >= 1, got {horizon}")
@@ -769,6 +1062,8 @@ def build_recommendation(
     if run_chips and active_ids:
         curves = chip_ev_curves(xp, prices, state, active_ids, gw_range)
     advice = _chip_advice(chip_ids, curves, plan, gw)
+    if chip_sim is not None:
+        advice = merge_chip_advice(advice, build_chip_advice_from_sim(chip_sim))
 
     # ---- (b) dream-team benchmark ------------------------------------------------
     if state is None:

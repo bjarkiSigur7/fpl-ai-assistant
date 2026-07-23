@@ -560,6 +560,44 @@ class TestArtifactEndpoints:
         assert resp.status_code == 404
         assert "recommendation.json not found" in resp.json()["detail"]
 
+    def test_recommendation_chip_advice_sim_fields_passthrough(
+        self, api_env: SimpleNamespace, client: TestClient
+    ) -> None:
+        """chip_advice v2 fields (season-sim) survive the round-trip verbatim."""
+        payload = make_recommendation_dict()
+        payload["chip_advice"] = [
+            {
+                "chip": "bb1",
+                "verdict": "hold",
+                "planned_gw": 34,
+                "ev_now": 1.2,
+                "best_gw": 37,
+                "best_ev": 6.8,
+                "e_gain_now": 1.2,
+                "sd": 2.4,
+                "p_best_week_now": 0.11,
+                "p_beats_hold": 0.34,
+                "recommended_gw": 37,
+                "p_best_week_reco": 0.28,
+                "confidence": "medium",
+                "n_rollouts": 1000,
+                "assumptions": ["Predictions frozen at the last refresh"],
+            },
+            {"chip": "tc1", "verdict": "hold"},  # pre-sim shape stays valid
+        ]
+        (api_env.processed / "recommendation.json").write_text(json.dumps(payload))
+        body = client.get("/api/recommendation").json()
+        bb1, tc1 = body["chip_advice"]
+        assert bb1["p_beats_hold"] == pytest.approx(0.34)
+        assert bb1["sd"] == pytest.approx(2.4)
+        assert bb1["recommended_gw"] == 37
+        assert bb1["confidence"] == "medium"
+        assert bb1["n_rollouts"] == 1000
+        assert bb1["assumptions"] == ["Predictions frozen at the last refresh"]
+        assert tc1["p_beats_hold"] is None
+        assert tc1["assumptions"] is None
+        Recommendation.model_validate(body)  # round-trips the extended contract
+
     def test_chip_curves_ok(self, api_env: SimpleNamespace, client: TestClient) -> None:
         pd.DataFrame(
             {
@@ -577,12 +615,44 @@ class TestArtifactEndpoints:
             "gw": 35,
             "objective": 312.5,
             "delta_vs_no_chip": 3.7,
-            # optional passthrough columns (absent from this minimal fixture file)
+            # optional passthrough columns (absent from this minimal v1 fixture file)
             "evaluated": None,
             "skip_reason": None,
             "window_last_gw": None,
             "urgency": None,
+            # season-simulation v2 columns: nullable, None when the file predates sim
+            "sd": None,
+            "p_best_week": None,
+            "p_beats_hold": None,
+            "n_rollouts": None,
         }
+
+    def test_chip_curves_v2_sim_columns_served(
+        self, api_env: SimpleNamespace, client: TestClient
+    ) -> None:
+        """chip_curves.parquet v2 (season-sim columns) is passed through, NaN -> None."""
+        pd.DataFrame(
+            {
+                "chip": ["bb1", "bb1"],
+                "gw": [34, 35],
+                "objective": [310.0, 312.5],
+                "delta_vs_no_chip": [1.2, 3.7],
+                "sd": [2.4, float("nan")],  # NaN must serve as null
+                "p_best_week": [0.11, 0.29],
+                "p_beats_hold": [0.34, 0.61],
+                "n_rollouts": [1000, 1000],
+            }
+        ).to_parquet(api_env.processed / "chip_curves.parquet", index=False)
+        body = client.get("/api/chip-curves").json()
+        first, second = body["curves"]
+        assert first["sd"] == pytest.approx(2.4)
+        assert first["p_best_week"] == pytest.approx(0.11)
+        assert first["p_beats_hold"] == pytest.approx(0.34)
+        assert first["n_rollouts"] == 1000
+        assert second["sd"] is None
+        assert second["p_beats_hold"] == pytest.approx(0.61)
+        # v1 columns absent from this file still serve as null
+        assert first["evaluated"] is None
 
     def test_chip_curves_missing_404(self, client: TestClient) -> None:
         resp = client.get("/api/chip-curves")

@@ -10,7 +10,7 @@ import { useMemo } from "react";
 import { useChipCurves, useRecommendation } from "@/lib/api";
 import { moneyBare, xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
-import { chipName, type ChipCurvePoint, type GwPlan } from "@/lib/types";
+import { chipName, type ChipAdvice, type ChipCurvePoint, type GwPlan } from "@/lib/types";
 import { MiniBarChart } from "@/components/charts";
 import { Card, CardHead, EmptyState, PageTitle, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
@@ -79,14 +79,39 @@ function GwCard({
   );
 }
 
+/** "hold vs play" verdict pill with the simulation confidence wording. */
+function VerdictPill({ advice }: { advice: ChipAdvice }) {
+  const conf = advice.confidence
+    ? ` · ${(advice.confidence === "medium" ? "med" : advice.confidence).toUpperCase()} CONF`
+    : "";
+  if (advice.verdict === "play") {
+    return (
+      <span className="rounded bg-pitch px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-[#0d0d0d]">
+        PLAY NOW{conf}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded border border-hairline bg-raised px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-ink-mid">
+      HOLD{conf}
+    </span>
+  );
+}
+
 function ChipMultiples({
   curves,
   gws,
+  advice,
 }: {
   curves: ChipCurvePoint[];
   gws: number[];
+  advice: ChipAdvice[];
 }) {
   const chips = useMemo(() => [...new Set(curves.map((c) => c.chip))], [curves]);
+  const adviceOf = useMemo(
+    () => new Map(advice.map((a) => [a.chip, a])),
+    [advice],
+  );
   if (chips.length === 0) {
     return (
       <p className="px-4 py-6 text-[13px] text-ink-dim">
@@ -94,42 +119,89 @@ function ChipMultiples({
       </p>
     );
   }
+  const hasSim = curves.some(
+    (c) => c.sd != null || c.p_best_week != null || c.p_beats_hold != null,
+  );
+  const assumptions =
+    advice.find((a) => a.assumptions && a.assumptions.length)?.assumptions ?? null;
+  const nRollouts =
+    advice.find((a) => a.n_rollouts != null)?.n_rollouts ??
+    curves.find((c) => c.n_rollouts != null)?.n_rollouts ??
+    null;
   return (
-    <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
-      {chips.map((chip) => {
-        const rows = curves.filter((c) => c.chip === chip);
-        const values = gws.map(
-          (gw) => rows.find((r) => r.gw === gw)?.delta_vs_no_chip ?? null,
-        );
-        const best = values.reduce(
-          (acc, v, i) => (v !== null && (acc.v === null || v > acc.v) ? { i, v } : acc),
-          { i: -1, v: null as number | null },
-        );
-        return (
-          <div key={chip} className="rounded border border-hairline-soft bg-raised/40 p-3">
-            <div className="mb-1 flex items-baseline justify-between">
-              <span className="text-[12.5px] font-semibold text-ink">{chipName(chip)}</span>
-              <span className="microlabel">{chip.toUpperCase()}</span>
+    <div>
+      <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
+        {chips.map((chip) => {
+          const rows = curves.filter((c) => c.chip === chip);
+          const rowAt = (gw: number) => rows.find((r) => r.gw === gw);
+          const values = gws.map((gw) => rowAt(gw)?.delta_vs_no_chip ?? null);
+          const bands = gws.map((gw) => rowAt(gw)?.sd ?? null);
+          const pBest = gws.map((gw) => rowAt(gw)?.p_best_week ?? null);
+          const best = values.reduce(
+            (acc, v, i) => (v !== null && (acc.v === null || v > acc.v) ? { i, v } : acc),
+            { i: -1, v: null as number | null },
+          );
+          const chipAdvice = adviceOf.get(chip);
+          const simBacked = chipAdvice?.p_beats_hold != null;
+          return (
+            <div key={chip} className="rounded border border-hairline-soft bg-raised/40 p-3">
+              <div className="mb-1 flex items-baseline justify-between gap-2">
+                <span className="truncate text-[12.5px] font-semibold text-ink">
+                  {chipName(chip)}{" "}
+                  <span className="microlabel">{chip.toUpperCase()}</span>
+                </span>
+                {chipAdvice ? <VerdictPill advice={chipAdvice} /> : null}
+              </div>
+              <MiniBarChart
+                values={values}
+                xLabels={gws.map((gw) => `${gw}`)}
+                highlight={best.i >= 0 ? best.i : undefined}
+                unit=" xP"
+                bands={bands}
+                pBest={pBest}
+              />
+              <div className="mt-1 space-y-0.5 font-mono text-[10px] text-ink-dim">
+                <div>
+                  {best.v !== null ? (
+                    <>
+                      BEST GW{gws[best.i]} · {best.v >= 0 ? "+" : "−"}
+                      {Math.abs(best.v).toFixed(1)} xP VS NO CHIP
+                    </>
+                  ) : (
+                    "OUTSIDE WINDOW"
+                  )}
+                </div>
+                {simBacked && chipAdvice ? (
+                  <div>
+                    BEATS HOLD NOW {Math.round((chipAdvice.p_beats_hold ?? 0) * 100)}%
+                    {chipAdvice.recommended_gw != null ? (
+                      <>
+                        {" "}· BEST WINDOW GW{chipAdvice.recommended_gw}
+                        {chipAdvice.p_best_week_reco != null
+                          ? ` (P ${chipAdvice.p_best_week_reco.toFixed(2)})`
+                          : ""}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <MiniBarChart
-              values={values}
-              xLabels={gws.map((gw) => `${gw}`)}
-              highlight={best.i >= 0 ? best.i : undefined}
-              unit=" xP"
-            />
-            <div className="mt-1 font-mono text-[10px] text-ink-dim">
-              {best.v !== null ? (
-                <>
-                  BEST GW{gws[best.i]} · {best.v >= 0 ? "+" : "−"}
-                  {Math.abs(best.v).toFixed(1)} xP VS NO CHIP
-                </>
-              ) : (
-                "OUTSIDE WINDOW"
-              )}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {hasSim ? (
+        <div className="border-t border-hairline-soft px-4 py-2.5">
+          <p className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim">
+            BARS Δ xP VS NO CHIP · WHISKERS ±1 SD ACROSS ROLLOUTS · MARKER ROW P(BEST WEEK)
+            {nRollouts != null ? ` · N=${nRollouts.toLocaleString("en-GB")}` : ""}
+          </p>
+          {assumptions ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
+              Assumptions: {assumptions.join(" · ")}.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -241,11 +313,19 @@ export default function PlannerPage() {
       </Card>
 
       <Card>
-        <CardHead label="CHIP EV CURVES — FORCED-CHIP RE-SOLVES" right="Δ xP VS NO CHIP" />
+        <CardHead
+          label={
+            chipData?.curves.some((c) => c.p_beats_hold != null)
+              ? "CHIP PLANNER — MONTE CARLO SEASON SIM"
+              : "CHIP EV CURVES — FORCED-CHIP RE-SOLVES"
+          }
+          right="Δ xP VS NO CHIP"
+        />
         {chipData ? (
           <ChipMultiples
             curves={chipData.curves}
             gws={horizonGws.length ? horizonGws : [...new Set(chipData.curves.map((c) => c.gw))].sort((a, b) => a - b)}
+            advice={rec.chip_advice}
           />
         ) : (
           <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">

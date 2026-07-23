@@ -442,16 +442,17 @@ def test_refresh_runs_optimize_best_effort_and_prints_launch_watch(
     models.mkdir()
     (models / "manifest.json").write_text("{}")
     monkeypatch.setattr(config, "MODELS_DIR", models)
-    monkeypatch.setattr(pipeline, "run_predict", lambda: order.append("predict"))
+    monkeypatch.setattr(pipeline, "run_predict", lambda **kw: order.append("predict"))
 
     def opt_boom() -> None:
         raise RuntimeError("optimize blew up")
 
     monkeypatch.setattr(pipeline, "run_optimize", opt_boom)
+    monkeypatch.setattr(pipeline, "run_simulate", lambda: order.append("simulate"))
     pipeline.run_refresh()  # must not raise despite the optimize failure
 
     out = " ".join(capsys.readouterr().out.split())  # undo rich's line wrapping
-    assert order == ["predict"]
+    assert order == ["predict", "simulate"]  # simulate still runs (best-effort chain)
     assert "optimize blew up" in out
     assert "launch watch" in out
     assert "NOT LIVE" in out

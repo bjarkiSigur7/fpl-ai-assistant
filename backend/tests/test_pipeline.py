@@ -153,11 +153,43 @@ def test_run_refresh_predicts_when_artifacts_exist(
     models.mkdir()
     (models / "manifest.json").write_text("{}")
     monkeypatch.setattr(config, "MODELS_DIR", models)
-    monkeypatch.setattr(pipeline, "run_predict", lambda: order.append("predict"))
+    seen_kwargs: list[dict] = []
+    monkeypatch.setattr(
+        pipeline,
+        "run_predict",
+        lambda **kw: (order.append("predict"), seen_kwargs.append(kw)),
+    )
     monkeypatch.setattr(pipeline, "run_optimize", lambda: order.append("optimize"))
+    monkeypatch.setattr(pipeline, "run_simulate", lambda: order.append("simulate"))
 
     pipeline.run_refresh()
-    assert order == ["predict", "optimize"]
+    assert order == ["predict", "optimize", "simulate"]
+    # pre-launch / between-seasons state (next_gw=None) -> no through-gw extension
+    assert seen_kwargs == [{"through_gw": None}]
+
+
+def test_run_refresh_live_predicts_through_chip_window_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Live refresh defaults the prediction window to the chip-window end (GW19)."""
+    from fplai import config
+
+    monkeypatch.setattr(
+        pipeline, "run_snapshot", lambda: _state(season=2026, next_gw=1)
+    )
+    monkeypatch.setattr(pipeline, "_refresh_pulls", lambda state: None)
+    monkeypatch.setattr(pipeline, "run_build", lambda: {})
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "manifest.json").write_text("{}")
+    monkeypatch.setattr(config, "MODELS_DIR", models)
+    seen: list[dict] = []
+    monkeypatch.setattr(pipeline, "run_predict", lambda **kw: seen.append(kw))
+    monkeypatch.setattr(pipeline, "run_optimize", lambda: None)
+    monkeypatch.setattr(pipeline, "run_simulate", lambda: None)
+
+    pipeline.run_refresh()
+    assert seen == [{"through_gw": 19}]  # set-1 chips expire at the GW19 deadline
 
 
 def test_run_refresh_stays_exit_zero_when_predict_fails(
@@ -173,11 +205,12 @@ def test_run_refresh_stays_exit_zero_when_predict_fails(
     (models / "manifest.json").write_text("{}")
     monkeypatch.setattr(config, "MODELS_DIR", models)
 
-    def boom() -> None:
+    def boom(**kwargs: object) -> None:
         raise RuntimeError("predict blew up")
 
     monkeypatch.setattr(pipeline, "run_predict", boom)
     monkeypatch.setattr(pipeline, "run_optimize", lambda: None)
+    monkeypatch.setattr(pipeline, "run_simulate", lambda: None)
     pipeline.run_refresh()  # must not raise
     assert "predict blew up" in capsys.readouterr().out
 
@@ -309,7 +342,7 @@ def test_cli_predict_passes_backtest_args(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(
         pipeline,
         "run_predict",
-        lambda season=None, gw=None, horizon=None, use_odds=True: seen.append(
+        lambda season=None, gw=None, horizon=None, through_gw=None, use_odds=True: seen.append(
             (season, gw, horizon, use_odds)
         ),
     )

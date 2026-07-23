@@ -258,7 +258,13 @@ class PlayerDetail(BaseModel):
 
 
 class ChipCurvePoint(BaseModel):
-    """One forced-chip re-solve point (``optimizer.chips.chip_ev_curves`` contract)."""
+    """One chip-curve point (``optimizer.chips.chip_ev_curves`` contract, v1 + v2).
+
+    The v2 columns (``sd`` … ``n_rollouts``) come from the Monte Carlo season
+    simulation (``optimizer.season_sim`` — ``ChipSimReport.to_frame()`` feeds
+    ``chip_curves.parquet`` v2). They are additive and nullable: pre-simulation
+    files simply serve ``None`` for all of them.
+    """
 
     chip: str
     gw: int
@@ -268,6 +274,11 @@ class ChipCurvePoint(BaseModel):
     skip_reason: str | None = None
     window_last_gw: int | None = None
     urgency: float | None = None
+    # --- season-simulation v2 columns (nullable, additive) ---------------------------
+    sd: float | None = None
+    p_best_week: float | None = None
+    p_beats_hold: float | None = None
+    n_rollouts: int | None = None
 
 
 class ChipCurvesResponse(BaseModel):

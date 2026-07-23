@@ -200,6 +200,35 @@ chip with EV deltas), `dream_team` (the fresh-£100m benchmark squad from a None
 `plan` (the full PlanResult), `stability` (from sensitivity), `rationale` (human-readable
 bullet strings, generated from the numbers — no LLM calls).
 
+## Season-simulation contracts (stage 6 — Monte Carlo chip planner)
+
+### models/sampler.py
+`PointsSampler.sample(predictions: DataFrame, n: int, seed: int) -> ndarray[n, rows]` —
+vectorized draws of realized FPL points per prediction row (player-fixture), sampling the
+decomposition jointly: minutes bucket ~ Categorical(q0,q1,q2); goals/assists ~ Poisson(λ·E[min]/90)
+conditional on bucket; CS/concede from team scoreline draws SHARED within a fixture (all players
+in one fixture-draw see the same scoreline — correlation matters for BB/DEF stacks); saves,
+DefCon ~ NB, bonus from the BPS rank machinery (cheap approximation acceptable, document it);
+cards/OG. Deterministic under seed. `sample_gw(predictions_gw, ...)` aggregates fixtures.
+
+### optimizer/season_sim.py
+`simulate_chip_plans(xp, prices, state, *, window: range, n_rollouts, seed, params) ->
+ChipSimReport` — (1) one no-chip backbone MILP over `window` (aggressive pruning, capped
+time); (2) candidate chip placements on the backbone: BB/TC gains analytic per GW (bench xP /
+best-captain xP from the backbone squad), WC/FH via bounded segment re-solves on a pruned
+pool; (3) PointsSampler rollouts scoring every candidate schedule per sampled season —
+autosubs/vice resolved per-sample from sampled minutes. Output per chip: E[gain] by GW over
+the FULL window, sd, P(this GW is the best week), P(playing now beats holding), recommended
+GW + confidence; plus joint-schedule ranking of the top-k chip schedules.
+`ChipSimReport.to_frame()` feeds chip_curves.parquet v2 (adds columns: sd, p_best_week,
+p_beats_hold, n_rollouts) — additive, the API/UI schema extends, never breaks.
+
+### Pipeline integration
+`fplai predict` gains `--through-gw` (default: end of current chip window, e.g. 19);
+`fplai simulate` runs simulate_chip_plans and writes chip_sim.parquet + folds the verdicts
+into recommendation.json's chip_advice (hold now carries a quantified value). Recommendation
+rationale cites simulation confidence, not just point deltas.
+
 ## API contracts (stage 5 — frontend depends on these)
 
 FastAPI under /api: `GET /health`; `GET /state` (season state, next deadline, data freshness,

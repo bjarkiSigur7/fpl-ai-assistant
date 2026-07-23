@@ -236,7 +236,9 @@ export function LineChart({
 }
 
 // ---------------------------------------------------------------------------
-// MiniBarChart — chip EV small-multiples: one series, per-mark tooltip
+// MiniBarChart — chip EV small-multiples: one series, per-mark tooltip.
+// Optional season-sim layers: ±1sd whisker per bar and a P(best week) marker
+// row under the bars (ink-opacity encodes probability; the max gets a ring).
 // ---------------------------------------------------------------------------
 
 export function MiniBarChart({
@@ -245,29 +247,60 @@ export function MiniBarChart({
   color = SERIES[0],
   highlight,
   unit = "",
+  bands,
+  pBest,
 }: {
   values: (number | null)[];
   xLabels: string[];
   color?: string;
   highlight?: number;
   unit?: string;
+  /** Optional ±1sd uncertainty whisker per bar (season-sim rollout spread). */
+  bands?: (number | null)[];
+  /** Optional P(this GW is the best week) per column — the sim's row marker. */
+  pBest?: (number | null)[];
 }) {
   const [tip, setTip] = useState<TipState | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  const markers = pBest && pBest.some((v) => v !== null) ? pBest : undefined;
   const VW = 240;
-  const VH = 120;
-  const pad = { l: 26, r: 8, t: 16, b: 18 };
+  const VH = markers ? 136 : 120;
+  const pad = { l: 26, r: 8, t: 16, b: markers ? 34 : 18 };
   const iw = VW - pad.l - pad.r;
   const ih = VH - pad.t - pad.b;
   const n = values.length;
 
   const present = values.filter((v): v is number => v !== null);
-  const maxAbs = niceMax(Math.max(...present.map((v) => Math.abs(v)), 0.1) * 1.05);
+  const spans = values.map((v, i) =>
+    v === null ? 0 : Math.abs(v) + Math.abs(bands?.[i] ?? 0),
+  );
+  const maxAbs = niceMax(Math.max(...spans, 0.1) * 1.05);
   const hasNeg = present.some((v) => v < 0);
   const yZero = hasNeg ? pad.t + ih / 2 : pad.t + ih;
   const scale = (hasNeg ? ih / 2 : ih) / maxAbs;
   const x = (i: number) => pad.l + ((i + 0.5) / n) * iw;
+  const clampY = (yy: number) => Math.min(Math.max(yy, pad.t), pad.t + ih);
+
+  const markerVals = markers ? markers.map((v) => v ?? 0) : [];
+  const markerMax = Math.max(...markerVals, 0.01);
+  const markerMaxI = markers ? markerVals.indexOf(Math.max(...markerVals)) : -1;
+  const markerY = VH - 22;
+
+  const showTip = (
+    e: React.PointerEvent<SVGRectElement>,
+    i: number,
+    lines: TipState["lines"],
+  ) => {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return;
+    setTip({
+      xFrac: x(i) / VW,
+      yFrac: (e.clientY - box.top) / box.height,
+      title: xLabels[i],
+      lines,
+    });
+  };
 
   return (
     <div ref={ref} className="relative">
@@ -284,6 +317,14 @@ export function MiniBarChart({
           const h = Math.max(Math.abs(v) * scale, 2);
           const yTop = v >= 0 ? yZero - h : yZero;
           const hl = i === highlight;
+          const sd = bands?.[i] ?? null;
+          const tipLines: TipState["lines"] = [
+            { swatch: color, text: `${v >= 0 ? "+" : "−"}${fmt(Math.abs(v))}${unit}` },
+            ...(sd !== null ? [{ text: `±${fmt(sd)} sd` }] : []),
+            ...(markers && markers[i] !== null
+              ? [{ text: `P(best) ${Math.round(markers[i]! * 100)}%` }]
+              : []),
+          ];
           return (
             <g key={i}>
               <rect
@@ -294,22 +335,20 @@ export function MiniBarChart({
                 rx={3}
                 fill={color}
                 opacity={hl ? 1 : 0.5}
-                onPointerEnter={(e) => {
-                  const box = ref.current?.getBoundingClientRect();
-                  if (!box) return;
-                  setTip({
-                    xFrac: x(i) / VW,
-                    yFrac: (e.clientY - box.top) / box.height,
-                    title: xLabels[i],
-                    lines: [{ swatch: color, text: `${v >= 0 ? "+" : "−"}${fmt(Math.abs(v))}${unit}` }],
-                  });
-                }}
+                onPointerEnter={(e) => showTip(e, i, tipLines)}
                 onPointerLeave={() => setTip(null)}
               />
+              {sd !== null && sd > 0 ? (
+                <g stroke={INK_MID} strokeWidth={1} opacity={0.65} pointerEvents="none">
+                  <line x1={x(i)} y1={clampY(yZero - (v + sd) * scale)} x2={x(i)} y2={clampY(yZero - (v - sd) * scale)} />
+                  <line x1={x(i) - 2.5} y1={clampY(yZero - (v + sd) * scale)} x2={x(i) + 2.5} y2={clampY(yZero - (v + sd) * scale)} />
+                  <line x1={x(i) - 2.5} y1={clampY(yZero - (v - sd) * scale)} x2={x(i) + 2.5} y2={clampY(yZero - (v - sd) * scale)} />
+                </g>
+              ) : null}
               {hl ? (
                 <text
                   x={x(i)}
-                  y={yTop - 4}
+                  y={clampY(yZero - (v + (sd ?? 0)) * scale) - 4}
                   textAnchor="middle"
                   fontSize={9.5}
                   fontWeight={600}
@@ -323,6 +362,31 @@ export function MiniBarChart({
             </g>
           );
         })}
+        {markers
+          ? markers.map((p, i) => {
+              if (p === null) return null;
+              const isMax = i === markerMaxI;
+              const half = isMax ? 3.5 : 2.5;
+              return (
+                <rect
+                  key={`m${i}`}
+                  x={x(i) - half}
+                  y={markerY - half}
+                  width={half * 2}
+                  height={half * 2}
+                  rx={1.5}
+                  fill={INK}
+                  fillOpacity={0.12 + 0.78 * (p / markerMax)}
+                  stroke={isMax ? INK_MID : "none"}
+                  strokeWidth={isMax ? 1 : 0}
+                  onPointerEnter={(e) =>
+                    showTip(e, i, [{ text: `P(best week) ${Math.round(p * 100)}%` }])
+                  }
+                  onPointerLeave={() => setTip(null)}
+                />
+              );
+            })
+          : null}
         {xLabels.map((l, i) => (
           <text key={i} x={x(i)} y={VH - 5} textAnchor="middle" fontSize={8.5} fill={INK_DIM} fontFamily={MONO}>
             {l}

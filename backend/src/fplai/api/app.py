@@ -498,7 +498,9 @@ def recommendation() -> Recommendation:
 
 @router.get("/chip-curves", response_model=ChipCurvesResponse)
 def chip_curves() -> ChipCurvesResponse:
-    """Chip EV curves (forced-chip re-solves) from ``chip_curves.parquet``."""
+    """Chip EV curves from ``chip_curves.parquet`` (v1 forced-chip re-solves; the
+    season-simulation v2 columns ``sd``/``p_best_week``/``p_beats_hold``/``n_rollouts``
+    are served when present in the file, ``None`` otherwise)."""
     path = _processed("chip_curves.parquet")
     try:
         df = cache.load_parquet(path)
