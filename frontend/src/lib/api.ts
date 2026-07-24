@@ -21,6 +21,7 @@ import type {
   ApiRefreshStatus,
   ApiStateResponse,
   ChipCurvesResponse,
+  DreamTeam,
   FixturePrediction,
   GwPrediction,
   ModelManifest,
@@ -28,11 +29,14 @@ import type {
   PlayerDetail,
   Position,
   PredictionsResponse,
+  RateTeamRequest,
+  RateTeamResponse,
   Recommendation,
   RefreshStatus,
   StateResponse,
   TeamInfo,
 } from "./types";
+import { RateTeamValidationError } from "./types";
 
 export const API_URL: string =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -371,6 +375,39 @@ export function useRefreshStatus(poll: boolean): SWRResponse<RefreshStatus> {
     },
     { ...BASE, refreshInterval: poll ? 2_000 : 0 },
   );
+}
+
+/** GET /api/dream-team — the fresh-£100m benchmark squad on disk (DreamTeam verbatim). */
+export async function fetchDreamTeam(): Promise<DreamTeam> {
+  return fetchJson<DreamTeam>("/api/dream-team");
+}
+
+/**
+ * POST /api/rate-team — score any 15-player squad against the model optimum.
+ * Throws RateTeamValidationError on 422 (its `detail` lists every violated rule)
+ * and ApiError on any other failure. Mock mode scores against the demo pool.
+ */
+export async function rateTeam(req: RateTeamRequest): Promise<RateTeamResponse> {
+  if (MOCK) {
+    const { mockPost } = await import("@/mocks");
+    return mockPost<RateTeamResponse>("/api/rate-team", req);
+  }
+  const path = "/api/rate-team";
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (res.status === 422) {
+    const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail =
+      body !== null && Array.isArray(body.detail)
+        ? (body.detail as unknown[]).map(String)
+        : ["Squad rejected by the rating engine."];
+    throw new RateTeamValidationError(detail);
+  }
+  if (!res.ok) throw new ApiError(res.status, path);
+  return (await res.json()) as RateTeamResponse;
 }
 
 export async function startRefresh(): Promise<RefreshStatus> {

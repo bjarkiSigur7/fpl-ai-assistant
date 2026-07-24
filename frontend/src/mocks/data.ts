@@ -23,12 +23,16 @@ import type {
   PlayerGwHistory,
   Position,
   PredictionsResponse,
+  RateTeamRequest,
+  RateTeamResponse,
+  RateVerdict,
   Recommendation,
   SquadState,
   StabilityEntry,
   StateResponse,
   TeamInfo,
 } from "@/lib/types";
+import { RateTeamValidationError } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // deterministic PRNG
@@ -1060,6 +1064,171 @@ export function initialSquadRecommendation(): Recommendation {
 
 export function myTeamResponse(entryId: number): MyTeamResponse {
   return { entry_id: entryId, state: squadState(), recommendation: myTeamRecommendation() };
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/rate-team — squad validation + the contract's exact scoring metric
+// ---------------------------------------------------------------------------
+
+const SQUAD_QUOTA: Record<Position, number> = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
+const XI_MIN: Record<Position, number> = { GKP: 1, DEF: 3, MID: 2, FWD: 1 };
+const XI_MAX: Record<Position, number> = { GKP: 1, DEF: 5, MID: 5, FWD: 3 };
+const POSITION_ORDER: Position[] = ["GKP", "DEF", "MID", "FWD"];
+
+/**
+ * Best legal XI for one GW, per the contract's greedy rule: position minimums
+ * (1 GKP / 3 DEF / 2 MID / 1 FWD) by xP, then fill to 11 by xP respecting the
+ * maxes (1 GKP / 5 DEF / 5 MID / 3 FWD). Returns XI sum + captain (max xP in XI).
+ */
+function bestLegalXi(
+  squad: MockPlayer[],
+  gw: number,
+): { xi: MockPlayer[]; total: number; captain: MockPlayer } {
+  const xpOf = new Map(squad.map((p) => [p.player_code, gwXp(p, gw)]));
+  const sorted = [...squad].sort(
+    (a, b) => xpOf.get(b.player_code)! - xpOf.get(a.player_code)!,
+  );
+  const xi: MockPlayer[] = [];
+  const count: Record<Position, number> = { GKP: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const pos of POSITION_ORDER) {
+    for (const p of sorted.filter((q) => q.position === pos).slice(0, XI_MIN[pos])) {
+      xi.push(p);
+      count[pos] += 1;
+    }
+  }
+  for (const p of sorted) {
+    if (xi.length === 11) break;
+    if (xi.includes(p) || count[p.position] >= XI_MAX[p.position]) continue;
+    xi.push(p);
+    count[p.position] += 1;
+  }
+  const captain = xi.reduce((best, p) =>
+    xpOf.get(p.player_code)! > xpOf.get(best.player_code)! ? p : best,
+  );
+  const total =
+    xi.reduce((s, p) => s + xpOf.get(p.player_code)!, 0) + xpOf.get(captain.player_code)!;
+  return { xi, total, captain };
+}
+
+/** metric(squad) = sum over the window's GWs of (best-XI xP + captain bonus). */
+function squadMetric(squad: MockPlayer[]): number {
+  return round2(DEMO_GWS.reduce((s, gw) => s + bestLegalXi(squad, gw).total, 0));
+}
+
+/** The cheapest legal 15 from the pool (quota + club limit) — the score floor. */
+function floorSquad(): MockPlayer[] {
+  const out: MockPlayer[] = [];
+  const clubCount = new Map<number, number>();
+  for (const pos of POSITION_ORDER) {
+    let need = SQUAD_QUOTA[pos];
+    const byPrice = PLAYERS.filter((p) => p.position === pos).sort(
+      (a, b) => a.price - b.price || a.web_name.localeCompare(b.web_name),
+    );
+    for (const p of byPrice) {
+      if (need === 0) break;
+      if ((clubCount.get(p.club.team_code) ?? 0) >= 3) continue;
+      out.push(p);
+      need -= 1;
+      clubCount.set(p.club.team_code, (clubCount.get(p.club.team_code) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
+/** Every violated squad rule, as the 422 detail strings. */
+function validateSquad(codes: number[]): { detail: string[]; squad: MockPlayer[] } {
+  const detail: string[] = [];
+  if (codes.length !== 15) detail.push(`need exactly 15 players (got ${codes.length})`);
+  const squad: MockPlayer[] = [];
+  for (const code of codes) {
+    const p = byCode.get(code);
+    if (!p) detail.push(`unknown player_code ${code}`);
+    else squad.push(p);
+  }
+  for (const pos of POSITION_ORDER) {
+    const n = squad.filter((p) => p.position === pos).length;
+    if (n !== SQUAD_QUOTA[pos]) detail.push(`need exactly ${SQUAD_QUOTA[pos]} ${pos} (got ${n})`);
+  }
+  const perClub = new Map<number, number>();
+  for (const p of squad) {
+    perClub.set(p.club.team_code, (perClub.get(p.club.team_code) ?? 0) + 1);
+  }
+  for (const [teamCode, n] of perClub) {
+    if (n > 3) {
+      const club = CLUBS.find((c) => c.team_code === teamCode);
+      detail.push(`more than 3 players from ${club?.short_name ?? teamCode} (got ${n})`);
+    }
+  }
+  const total = squad.reduce((s, p) => s + p.price, 0);
+  if (total > 1000) {
+    detail.push(
+      `total price £${(total / 10).toFixed(1)}m exceeds the £100.0m budget`,
+    );
+  }
+  return { detail, squad };
+}
+
+function verdictOf(score: number): RateVerdict {
+  if (score >= 95) return "ELITE";
+  if (score >= 85) return "STRONG";
+  if (score >= 70) return "SOLID";
+  if (score >= 50) return "ROUGH";
+  return "FODDER";
+}
+
+/** Scores any legal 15 against the dream-team optimum and the cheapest-legal floor. */
+export function rateTeamResponse(req: RateTeamRequest): RateTeamResponse {
+  const { detail, squad } = validateSquad(req.player_codes ?? []);
+  if (detail.length > 0) throw new RateTeamValidationError(detail);
+
+  const dream = dreamTeamResponse();
+  const optimalSquad = dream.squad.map((code) => byCode.get(code)!);
+  const teamMetric = squadMetric(squad);
+  const optimalMetric = squadMetric(optimalSquad);
+  const floorMetric = squadMetric(floorSquad());
+  const span = optimalMetric - floorMetric;
+  const score =
+    span > 0 ? Math.min(Math.max((teamMetric - floorMetric) / span, 0), 1) * 100 : 0;
+
+  const gw1 = bestLegalXi(squad, DEMO_GW);
+  const xiCodes = new Set(gw1.xi.map((p) => p.player_code));
+  const nPos = (pos: Position) => gw1.xi.filter((p) => p.position === pos).length;
+  const horizonOf = (p: MockPlayer) =>
+    round2(DEMO_GWS.reduce((s, gw) => s + gwXp(p, gw), 0));
+
+  return {
+    score: round2(score),
+    verdict: verdictOf(score),
+    season: DEMO_SEASON,
+    from_gw: DEMO_GW,
+    horizon: DEMO_GWS.length,
+    team_xp_gw1: round2(gw1.total),
+    team_xp_horizon: teamMetric,
+    optimal_xp_horizon: optimalMetric,
+    floor_xp_horizon: floorMetric,
+    best_xi_gw1: gw1.xi.map((p) => p.player_code),
+    formation_gw1: `${nPos("DEF")}-${nPos("MID")}-${nPos("FWD")}`,
+    suggested_captain: gw1.captain.player_code,
+    player_ratings: squad.map((p) => ({
+      player_code: p.player_code,
+      web_name: p.web_name,
+      position: p.position,
+      team_short: p.club.short_name,
+      price: p.price,
+      xp_gw1: gwXp(p, DEMO_GW),
+      xp_horizon: horizonOf(p),
+      q0: p.q0,
+      in_best_xi_gw1: xiCodes.has(p.player_code),
+    })),
+    weakest: [...squad]
+      .sort((a, b) => horizonOf(a) - horizonOf(b))
+      .slice(0, 3)
+      .map((p) => ({
+        player_code: p.player_code,
+        web_name: p.web_name,
+        xp_horizon: horizonOf(p),
+      })),
+  };
 }
 
 // ---------------------------------------------------------------------------

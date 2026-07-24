@@ -543,6 +543,70 @@ export interface HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/rate-team — field-for-field mirror of the rate-team contract.
+// Request/response snake_case verbatim; 422 bodies are {"detail": [str, ...]}.
+// ---------------------------------------------------------------------------
+
+export interface RateTeamRequest {
+  /** Exactly 15 player codes (2 GKP / 5 DEF / 5 MID / 3 FWD, <=3 per club, <=£100.0m). */
+  player_codes: number[];
+  /** null -> the live prediction window's season. */
+  season: number | null;
+  /** null -> the live prediction window's first GW. */
+  gw: number | null;
+}
+
+/** Score bands: >=95 ELITE, >=85 STRONG, >=70 SOLID, >=50 ROUGH, else FODDER. */
+export type RateVerdict = "ELITE" | "STRONG" | "SOLID" | "ROUGH" | "FODDER";
+
+export interface RateTeamPlayerRating {
+  player_code: number;
+  web_name: string;
+  position: string;
+  team_short: string | null;
+  price: number;
+  xp_gw1: number;
+  xp_horizon: number;
+  q0: number | null;
+  in_best_xi_gw1: boolean;
+}
+
+export interface RateTeamWeakest {
+  player_code: number;
+  web_name: string;
+  xp_horizon: number;
+}
+
+/** 200 body of POST /api/rate-team. */
+export interface RateTeamResponse {
+  /** clamp01((team - floor) / (optimal - floor)) * 100. */
+  score: number;
+  verdict: RateVerdict;
+  season: number;
+  from_gw: number;
+  horizon: number;
+  team_xp_gw1: number;
+  team_xp_horizon: number;
+  optimal_xp_horizon: number;
+  floor_xp_horizon: number;
+  best_xi_gw1: number[];
+  /** "D-M-F". */
+  formation_gw1: string;
+  suggested_captain: number;
+  player_ratings: RateTeamPlayerRating[];
+  weakest: RateTeamWeakest[];
+}
+
+/** Thrown by api.rateTeam on a 422 — `detail` lists every violated squad rule. */
+export class RateTeamValidationError extends Error {
+  readonly status = 422;
+  constructor(public readonly detail: string[]) {
+    super(detail.join("; "));
+    this.name = "RateTeamValidationError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // display helpers shared across the app
 // ---------------------------------------------------------------------------
 

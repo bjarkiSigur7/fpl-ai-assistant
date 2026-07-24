@@ -50,12 +50,15 @@ from fplai.api.schemas import (
     PlayerIdentity,
     PlayerPrediction,
     PredictionsResponse,
+    RateTeamRequest,
     RefreshStatusResponse,
     SeasonStateModel,
     SnapshotFreshness,
     StateResponse,
 )
 from fplai.optimizer.plans import DreamTeam, Recommendation
+from fplai.optimizer.rating import RatingResult, TeamValidationError
+from fplai.optimizer.rating import rate_team as _rate_team_squad
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -489,6 +492,77 @@ def recommendation() -> Recommendation:
             "(or `fplai refresh`) first",
         ) from exc
     return Recommendation.model_validate(_unwrap(data, "recommendation"))
+
+
+# --------------------------------------------------------------------------------------
+# /rate-team
+# --------------------------------------------------------------------------------------
+
+
+@router.post(
+    "/rate-team",
+    response_model=RatingResult,
+    responses={
+        404: {"description": "Predictions, live roster or dream team missing on disk"},
+        422: {"description": "Illegal squad — detail lists every violated rule"},
+    },
+)
+def rate_team(req: RateTeamRequest) -> RatingResult:
+    """Rate a 15-man squad against the dream-team benchmark over the prediction window.
+
+    ``season``/``gw`` default to the live prediction window's first GW; the horizon
+    runs to the last GW with predictions on disk.  An illegal squad answers **422**
+    with ``{"detail": [rule, ...]}`` listing every violated rule; missing artifacts
+    answer **404** with a hint.
+    """
+    gw_df = _load_parquet_or_404(
+        "predictions_gw.parquet", "run `fplai predict` (or `fplai refresh`) first"
+    )
+    roster = _load_parquet_or_404("live_roster.parquet", "run `fplai refresh` first")
+
+    season = req.season if req.season is not None else int(gw_df["season"].max())
+    in_season = gw_df[gw_df["season"] == season]
+    if in_season.empty:
+        available = sorted(int(s) for s in gw_df["season"].unique())
+        raise HTTPException(
+            status_code=404,
+            detail=f"no predictions for season {season} (available: {available})",
+        )
+    gws = sorted(int(g) for g in in_season["gw"].unique())
+    from_gw = req.gw if req.gw is not None else gws[0]
+    if from_gw not in gws:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no predictions for season {season} GW{from_gw} (available GWs: {gws})",
+        )
+    horizon = gws[-1] - from_gw + 1
+
+    try:
+        dream_data = cache.load_json(_processed("dream_team.json"))
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="dream_team.json not found — run `fplai optimize` "
+            "(or `fplai refresh`) first",
+        ) from exc
+    dream_squad = [int(c) for c in _unwrap(dream_data, "dream_team")["squad"]]
+
+    _, shorts = _team_names(season)
+    roster = roster.copy()
+    roster["team_short"] = roster["team_code"].map(shorts)
+
+    try:
+        return _rate_team_squad(
+            req.player_codes,
+            gw_df,
+            roster,
+            dream_squad,
+            season=season,
+            from_gw=from_gw,
+            horizon=horizon,
+        )
+    except TeamValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.problems) from exc
 
 
 # --------------------------------------------------------------------------------------

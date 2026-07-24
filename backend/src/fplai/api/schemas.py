@@ -32,6 +32,7 @@ __all__ = [
     "PlayerIdentity",
     "PlayerPrediction",
     "PredictionsResponse",
+    "RateTeamRequest",
     "RefreshStatusResponse",
     "SeasonStateModel",
     "SnapshotFreshness",
@@ -249,6 +250,32 @@ class PlayerDetail(BaseModel):
     history: list[PlayerGwHistoryRow] = Field(default_factory=list)
     upcoming: list[FixturePrediction] = Field(
         default_factory=list, description="Per-fixture xP breakdown from predictions.parquet"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# /rate-team
+# --------------------------------------------------------------------------------------
+
+
+class RateTeamRequest(BaseModel):
+    """POST /api/rate-team body: a full 15-man squad by player code.
+
+    ``season``/``gw`` default to the live prediction window's first GW.  The list
+    length (and every other legality rule) is validated by the endpoint, not this
+    schema, so an illegal squad always gets the contract's 422
+    ``{"detail": [rule, ...]}`` shape rather than FastAPI's loc/msg records.  The
+    response model is :class:`fplai.optimizer.rating.RatingResult`, served verbatim.
+    """
+
+    player_codes: list[int] = Field(
+        description="Exactly 15 FPL player codes (element.code, the stable key)"
+    )
+    season: int | None = Field(
+        default=None, description="Season start year; None = the live prediction season"
+    )
+    gw: int | None = Field(
+        default=None, description="First GW of the rating window; None = earliest on disk"
     )
 
 

@@ -12,7 +12,7 @@ import {
   predictionsResponse,
   stateResponse,
 } from "./data";
-import type { RefreshStatus } from "@/lib/types";
+import type { RateTeamRequest, RefreshStatus } from "@/lib/types";
 
 /** Simulated latency so skeletons are visible in mock mode (ms). */
 const MOCK_DELAY_MS = 350;
@@ -124,11 +124,17 @@ export async function mockFetch<T>(path: string): Promise<T> {
   throw new MockNotFound(path);
 }
 
-export async function mockPost<T>(path: string): Promise<T> {
+export async function mockPost<T>(path: string, body?: unknown): Promise<T> {
   await sleep(150);
   if (path === "/api/refresh") {
     if (refreshStartedAt === null) refreshStartedAt = Date.now();
     return refreshStatus() as T;
+  }
+  if (path === "/api/rate-team") {
+    // A beat longer than the base delay so the EVALUATE moment reads as a solve.
+    await sleep(500);
+    const { rateTeamResponse } = await import("./data");
+    return rateTeamResponse(body as RateTeamRequest) as T;
   }
   throw new MockNotFound(path);
 }

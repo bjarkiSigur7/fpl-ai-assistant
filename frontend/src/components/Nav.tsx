@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/", label: "DASHBOARD" },
   { href: "/players", label: "PLAYERS" },
   { href: "/planner", label: "PLANNER" },
+  { href: "/rating", label: "AI RATING" },
   { href: "/settings", label: "SETTINGS" },
 ];
 
@@ -35,7 +36,7 @@ export function Nav() {
                 key={href}
                 href={href}
                 aria-current={active ? "page" : undefined}
-                className={`relative px-2.5 py-4 font-mono text-[11px] tracking-[0.14em] transition-colors sm:px-3.5 ${
+                className={`relative whitespace-nowrap px-2.5 py-4 font-mono text-[11px] tracking-[0.14em] transition-colors sm:px-3.5 ${
                   active ? "text-ink" : "text-ink-dim hover:text-ink-mid"
                 }`}
               >
