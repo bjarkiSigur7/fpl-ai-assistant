@@ -47,7 +47,9 @@ export function Ticker() {
 
   const modelLabel = state?.model
     ? `MODEL v${state.model.schema} · ${shortUtc(state.model.created_utc).slice(0, 6)}`
-    : "MODEL —";
+    : state?.model_version
+      ? `MODEL ${state.model_version.toUpperCase()}`
+      : "MODEL —";
 
   const seasonChip = live
     ? `LIVE ${seasonSlash(2026)}${state?.next_gw ? ` · GW${state.next_gw}` : ""}`

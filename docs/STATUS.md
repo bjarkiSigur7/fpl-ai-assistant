@@ -1,6 +1,9 @@
 # STATUS.md — what works today
 
-Last updated: 2026-07-23 (stage-6 integrator pass: the Monte Carlo season-simulation
+Last updated: 2026-07-24 (public-release integrator pass: static publisher +
+dual-mode frontend + GitHub Actions release engineering verified end to end —
+see "Public release engineering" below). Previous pass 2026-07-23 (stage-6:
+the Monte Carlo season-simulation
 chip planner is live — predictions extend through GW19, `fplai simulate` prices every
 chip week over the FULL set-1 window with rollout-level uncertainty, and the old
 greedy chip cascade is re-verdicted with probabilities; earlier the same day the
@@ -30,10 +33,70 @@ simulation (112 s), and the recommendation's chip advice speaks probability
 greedy in-horizon deltas. See "Season simulation" below.
 
 ```
-813 offline tests pass    (backend: uv run pytest -q -m "not live")
+855 offline tests pass    (backend: uv run pytest -q -m "not live")
 ruff clean                (uv run ruff check src tests)
-eslint clean + prod build (frontend: npm run lint && npm run build)
+eslint clean + prod build (frontend: npm run lint && npm run build — default AND
+                           NEXT_PUBLIC_STATIC=1 static-export flavours)
 ```
+
+## Public release engineering — COMPLETE (2026-07-24)
+
+The $0/month all-GitHub release architecture is built and verified end to end
+(nothing has been pushed — the maintainer publishes):
+
+- **Static publisher**: `fplai publish-static [--out DIR]` writes the 8-file
+  contract bundle to `site-data/` (gitignored) — meta / players / xp /
+  predictions_gw1 / recommendation / dream_team / chip_curves / rating JSON +
+  empty `history/`. Real-data bundle: **440,991 B total (22% of the 2 MB
+  budget)**, byte-identical across repeat builds, rating anchors
+  (floor 109.708 / optimal 571.491, GW1..19) exactly match the Python engine.
+- **Dual-mode frontend**: default local mode untouched; `NEXT_PUBLIC_STATIC=1`
+  + `NEXT_PUBLIC_BASE_PATH` produce a 562-page static export whose AI-Rating
+  runs client-side (`lib/rating.ts`, TS port of `fplai/optimizer/rating.py`;
+  parity suite `npm run test:unit`: 25/25 real-data squads match the Python
+  engine to 1e-13). Public build hides entry/refresh/my-team surfaces and
+  carries the unofficial-tool disclaimer + MIT/GitHub footer.
+- **Workflows** (`.github/workflows/`, all actionlint-clean; helper scripts
+  shellcheck-clean): `ci.yml`; `model-run.yml` (daily 05:30 UTC cron +
+  dispatch; snapshot -> build -> predict -> optimize -> simulate ->
+  publish-static; data/ via Actions cache with marker-file self-heal);
+  `deploy-pages.yml` (deploys the export + bundle to GitHub Pages on
+  model-run success or push to main); `deadline-watch.yml` (hourly, triggers
+  an extra full run ~3 h before each GW deadline).
+- **Verified this pass**: 855 offline tests + ruff clean; eslint clean; both
+  build flavours green; served the basePath export GH-Pages-style and proved
+  every page (dashboard/players/player-detail/planner/rating/settings) and all
+  8 bundle files load with zero console errors, the disclaimer footer is in
+  every page's HTML, and local-only surfaces (entry card, wiring, refresh) are
+  absent from the static build's rendered output; no secrets in tracked files
+  (the odds key lives only in gitignored `.env`).
+
+**Maintainer's next steps (in order):**
+
+1. Create the **public** GitHub repo `bjarkiSigur7/fpl-ai-assistant` (public =
+   free Actions minutes) and push `main`.
+2. Repo *Settings -> Secrets and variables -> Actions*: add secret
+   `FPLAI_ODDS_API_KEY` (optional but recommended; odds degrade gracefully
+   without it). Optional repo **variables**: `FPLAI_SEASON` (default 2026),
+   `FPLAI_DATA_CACHE_VERSION` (bump to force a data re-bootstrap),
+   `PAGES_BASE_PATH` (set to `/` at domain cutover; default
+   `/fpl-ai-assistant`).
+3. *Settings -> Pages*: set **Source = GitHub Actions** (enables the
+   deploy-pages workflow).
+4. Trigger the first `model-run` (*Actions -> model-run -> Run workflow*) or
+   wait for the 05:30 UTC cron. **First run hits a cold Actions cache: the
+   marker-file self-heal bootstraps backfill -> build -> train, adding ~40 min
+   on top of the normal batch — expect it and don't cancel.** Subsequent runs
+   restore the cache and skip the bootstrap.
+5. On model-run success, deploy-pages publishes automatically to
+   `bjarkisigur7.github.io/fpl-ai-assistant`. (A push to `main` before any
+   successful model-run deploys the site data-less with loud empty states —
+   intentional first-boot behaviour.)
+6. Add real screenshots at `docs/screenshots/{dashboard,planner,rating}.png`
+   (the README references them; they render as broken images until added).
+
+Operational runbook: `docs/PUBLIC_RELEASE.md` (cadence, cache self-heal,
+archive branch, key rotation, domain cutover, incident playbook).
 
 ## Commands
 

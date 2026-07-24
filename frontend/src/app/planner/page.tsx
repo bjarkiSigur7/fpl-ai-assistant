@@ -7,7 +7,7 @@
  */
 
 import { useMemo } from "react";
-import { useChipCurves, useRecommendation } from "@/lib/api";
+import { OFFLINE_HINT, useChipCurves, useRecommendation } from "@/lib/api";
 import { moneyBare, xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
 import { chipName, type ChipAdvice, type ChipCurvePoint, type GwPlan } from "@/lib/types";
@@ -254,10 +254,7 @@ export default function PlannerPage() {
 
   if (error) {
     return (
-      <EmptyState
-        title="NO PLAN FEED"
-        detail="The planner needs the recommendation endpoint. Start the backend or run with NEXT_PUBLIC_MOCK=1."
-      />
+      <EmptyState title="NO PLAN FEED" detail={OFFLINE_HINT} />
     );
   }
 

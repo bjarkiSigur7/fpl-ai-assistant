@@ -1,13 +1,23 @@
 "use client";
 
 /**
- * Typed API client + SWR hooks.
+ * Typed API client + SWR hooks — the desk's ONLY data layer. Three modes:
  *
- * The real FastAPI backend serves the `Api*` wire shapes in ./types (field names
- * verbatim from backend/src/fplai/api/schemas.py); the adapters below map them into
- * the flattened view models the pages consume. When NEXT_PUBLIC_MOCK=1 every request
- * is served from src/mocks/ instead of the network (mocks produce the view models
- * directly), so the UI runs standalone against deterministic 2025-26 demo data.
+ * - LOCAL (default): the real FastAPI backend at NEXT_PUBLIC_API_URL serves the
+ *   `Api*` wire shapes in ./types (field names verbatim from
+ *   backend/src/fplai/api/schemas.py); the adapters below map them into the
+ *   flattened view models the pages consume.
+ * - STATIC (NEXT_PUBLIC_STATIC=1): the public GitHub Pages build. Everything is
+ *   served from the daily static bundle at {NEXT_PUBLIC_BASE_PATH}/data/ (the
+ *   GitHub Actions workflow copies `fplai publish-static` output into
+ *   public/data/ before `next build`); ./staticBundle adapts the bundle onto
+ *   the same view models, and the AI-Rating runs client-side via ./rating.
+ *   Local-only surfaces (my-team, refresh) are inert in this mode.
+ * - MOCK (NEXT_PUBLIC_MOCK=1, ignored when STATIC): served from src/mocks/ so
+ *   the UI runs standalone against deterministic demo data.
+ *
+ * Pages never branch on the mode — they consume the view models and the
+ * mode-aware copy exported here (OFFLINE_HINT).
  */
 
 import useSWR, { type SWRConfiguration, type SWRResponse } from "swr";
@@ -41,7 +51,15 @@ import { RateTeamValidationError } from "./types";
 export const API_URL: string =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export const MOCK: boolean = process.env.NEXT_PUBLIC_MOCK === "1";
+/** Public GitHub Pages build: all data from the static bundle, no backend. */
+export const STATIC: boolean = process.env.NEXT_PUBLIC_STATIC === "1";
+
+export const MOCK: boolean = !STATIC && process.env.NEXT_PUBLIC_MOCK === "1";
+
+/** Mode-aware "feed is down" copy for the pages' empty states. */
+export const OFFLINE_HINT: string = STATIC
+  ? "The published data bundle failed to load. The site refreshes daily on GitHub Actions — try again in a moment."
+  : "The model API is not answering. Start the backend (uvicorn fplai.api.app:app) or run the frontend with NEXT_PUBLIC_MOCK=1 for the standalone demo.";
 
 /** Page size for /api/predictions (backend caps limit at 1000). */
 const PREDICTIONS_PAGE = 1000;
@@ -196,6 +214,10 @@ async function fetchPredictionsGw(
 
 /** Assemble the horizon-wide predictions view from the per-GW paginated endpoint. */
 async function fetchPredictionsView(): Promise<PredictionsResponse> {
+  if (STATIC) {
+    const { staticPredictions } = await import("./staticBundle");
+    return staticPredictions();
+  }
   if (MOCK) {
     const { mockFetch } = await import("@/mocks");
     return mockFetch<PredictionsResponse>("/api/predictions");
@@ -295,6 +317,10 @@ export function useDeskState(): SWRResponse<StateResponse> {
   return useSWR<StateResponse>(
     "/api/state",
     async (path: string) => {
+      if (STATIC) {
+        const { staticState } = await import("./staticBundle");
+        return staticState();
+      }
       if (MOCK) return fetchJson<StateResponse>(path);
       return adaptState(await fetchJson<ApiStateResponse>(path));
     },
@@ -319,10 +345,16 @@ export function usePredictions(): SWRResponse<PredictionsResponse> {
 export function useRecommendation(
   entryId: number | null,
 ): SWRResponse<Recommendation> & { entryScoped: boolean } {
-  const key = entryId !== null ? `/api/my-team/${entryId}` : "/api/recommendation";
+  // Static mode has no my-team endpoints: everyone gets the shared verdict.
+  const scoped = !STATIC && entryId !== null;
+  const key = scoped ? `/api/my-team/${entryId}` : "/api/recommendation";
   const swr = useSWR<Recommendation>(
     key,
     async (path: string) => {
+      if (STATIC) {
+        const { staticRecommendation } = await import("./staticBundle");
+        return staticRecommendation();
+      }
       if (entryId !== null) {
         if (MOCK) {
           const res = await fetchJson<MyTeamResponse>(path);
@@ -337,13 +369,17 @@ export function useRecommendation(
     },
     { ...BASE, refreshInterval: 60_000 },
   );
-  return { ...swr, entryScoped: entryId !== null };
+  return { ...swr, entryScoped: scoped };
 }
 
 export function usePlayerDetail(code: number | null): SWRResponse<PlayerDetail> {
   return useSWR<PlayerDetail>(
     code !== null ? `/api/players/${code}` : null,
     async (path: string) => {
+      if (STATIC) {
+        const { staticPlayerDetail } = await import("./staticBundle");
+        return staticPlayerDetail(code!);
+      }
       if (MOCK) return fetchJson<PlayerDetail>(path);
       return adaptPlayerDetail(await fetchJson<ApiPlayerDetail>(path));
     },
@@ -353,10 +389,14 @@ export function usePlayerDetail(code: number | null): SWRResponse<PlayerDetail> 
 
 export function useChipCurves(entryId: number | null): SWRResponse<ChipCurvesResponse> {
   const key =
-    entryId !== null ? `/api/chip-curves?entry_id=${entryId}` : "/api/chip-curves";
+    !STATIC && entryId !== null ? `/api/chip-curves?entry_id=${entryId}` : "/api/chip-curves";
   return useSWR<ChipCurvesResponse>(
     key,
     async (path: string) => {
+      if (STATIC) {
+        const { staticChipCurves } = await import("./staticBundle");
+        return staticChipCurves();
+      }
       if (MOCK) return fetchJson<ChipCurvesResponse>(path);
       const api = await fetchJson<ApiChipCurvesResponse>("/api/chip-curves");
       return { curves: api.curves };
@@ -365,29 +405,43 @@ export function useChipCurves(entryId: number | null): SWRResponse<ChipCurvesRes
   );
 }
 
-/** Refresh status; polls every 2s while `poll` is true. */
+/** Refresh status; polls every 2s while `poll` is true. Inert in static mode. */
 export function useRefreshStatus(poll: boolean): SWRResponse<RefreshStatus> {
   return useSWR<RefreshStatus>(
     "/api/refresh/status",
     async (path: string) => {
+      if (STATIC) {
+        const { staticRefreshStatus } = await import("./staticBundle");
+        return staticRefreshStatus();
+      }
       if (MOCK) return fetchJson<RefreshStatus>(path);
       return adaptRefresh(await fetchJson<ApiRefreshStatus>(`${path}?tail=200`));
     },
-    { ...BASE, refreshInterval: poll ? 2_000 : 0 },
+    { ...BASE, refreshInterval: !STATIC && poll ? 2_000 : 0 },
   );
 }
 
 /** GET /api/dream-team — the fresh-£100m benchmark squad on disk (DreamTeam verbatim). */
 export async function fetchDreamTeam(): Promise<DreamTeam> {
+  if (STATIC) {
+    const { staticDreamTeam } = await import("./staticBundle");
+    return staticDreamTeam();
+  }
   return fetchJson<DreamTeam>("/api/dream-team");
 }
 
 /**
- * POST /api/rate-team — score any 15-player squad against the model optimum.
- * Throws RateTeamValidationError on 422 (its `detail` lists every violated rule)
- * and ApiError on any other failure. Mock mode scores against the demo pool.
+ * Score any 15-player squad against the model optimum. Local mode POSTs to
+ * /api/rate-team; static mode computes the identical metric CLIENT-SIDE via
+ * lib/rating.ts from the bundle (players + xp + rating anchors). Throws
+ * RateTeamValidationError with every violated rule for an illegal squad and
+ * ApiError on any other failure. Mock mode scores against the demo pool.
  */
 export async function rateTeam(req: RateTeamRequest): Promise<RateTeamResponse> {
+  if (STATIC) {
+    const { staticRateTeam } = await import("./staticBundle");
+    return staticRateTeam(req);
+  }
   if (MOCK) {
     const { mockPost } = await import("@/mocks");
     return mockPost<RateTeamResponse>("/api/rate-team", req);
@@ -411,6 +465,11 @@ export async function rateTeam(req: RateTeamRequest): Promise<RateTeamResponse> 
 }
 
 export async function startRefresh(): Promise<RefreshStatus> {
+  if (STATIC) {
+    // Local-only feature: the public build's data is refreshed by the daily
+    // GitHub Actions batch, never from the browser.
+    throw new ApiError(405, "/api/refresh");
+  }
   if (MOCK) return postJson<RefreshStatus>("/api/refresh");
   try {
     return adaptRefresh(await postJson<ApiRefreshStatus>("/api/refresh"));

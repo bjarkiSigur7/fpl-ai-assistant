@@ -6,6 +6,7 @@ backfill, build, refresh), model commands (train, predict), the optimizer
 walk-forward backtest harness (backtest).
 """
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -222,6 +223,31 @@ def simulate(
         run_simulate(entry_id, rollouts=rollouts, seed=seed, through_gw=through_gw)
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]simulate failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command(name="publish-static")
+def publish_static(
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out",
+            help="Bundle output directory (default: <repo>/site-data, gitignored).",
+        ),
+    ] = None,
+) -> None:
+    """Publish the static site-data JSON bundle for the GitHub-Pages frontend.
+
+    Builds meta/players/xp/predictions_gw1/recommendation/dream_team/chip_curves/
+    rating JSON files from the data/processed artifacts (deterministic, 3dp floats,
+    < 2 MB) and prints per-file byte sizes.
+    """
+    from fplai.pipeline import run_publish_static
+
+    try:
+        run_publish_static(out)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]publish-static failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 

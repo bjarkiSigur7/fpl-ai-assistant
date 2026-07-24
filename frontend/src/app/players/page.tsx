@@ -8,6 +8,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { OFFLINE_HINT } from "@/lib/api";
 import { moneyBare, xp2 } from "@/lib/format";
 import { usePlayerIndex, type IndexedPlayer } from "@/lib/playerIndex";
 import { POSITIONS, type Position } from "@/lib/types";
@@ -129,10 +130,7 @@ export default function PlayersPage() {
 
   if (error) {
     return (
-      <EmptyState
-        title="NO PREDICTIONS FEED"
-        detail="The predictions endpoint is not answering. Run `fplai predict` on the backend, or set NEXT_PUBLIC_MOCK=1 for the standalone demo."
-      />
+      <EmptyState title="NO PREDICTIONS FEED" detail={OFFLINE_HINT} />
     );
   }
 

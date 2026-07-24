@@ -3,7 +3,7 @@
 # predict/optimize demo window defaults to 2025-26 GW34 — override with SEASON/GW/GWS,
 # e.g. `make demo GW=30` or `make backtest GWS=30..38`.
 
-.PHONY: refresh train predict optimize simulate demo backtest api web dev test test-live lint
+.PHONY: refresh train predict optimize simulate demo backtest api web dev test test-live lint publish-static
 
 SEASON ?= 2025
 GW ?= 34
@@ -37,6 +37,11 @@ demo:
 # Walk-forward policy backtest (stage 4 harness; GWS narrows the window, e.g. GWS=30..38)
 backtest:
 	cd backend && uv run fplai backtest --season $(SEASON) $(if $(GWS),--gws $(GWS))
+
+# Build the public static JSON bundle into site-data/ (gitignored) — the same
+# artifact the daily model-run GitHub Actions workflow ships to the Pages site
+publish-static:
+	cd backend && uv run fplai publish-static --out ../site-data
 
 # Run the FastAPI backend (http://localhost:8000)
 api:

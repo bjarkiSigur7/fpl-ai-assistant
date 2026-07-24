@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useRecommendation } from "@/lib/api";
+import { OFFLINE_HINT, useRecommendation } from "@/lib/api";
 import { xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
 import type { Recommendation } from "@/lib/types";
@@ -229,7 +229,7 @@ export default function DashboardPage() {
     return (
       <EmptyState
         title="DESK OFFLINE"
-        detail="The model API is not answering. Start the backend (uvicorn fplai.api.app:app) or run the frontend with NEXT_PUBLIC_MOCK=1 for the standalone demo."
+        detail={OFFLINE_HINT}
         action={
           <button
             onClick={() => void mutate()}

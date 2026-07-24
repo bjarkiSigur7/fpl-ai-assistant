@@ -11,15 +11,49 @@ for data fetching. The only added npm dependency is `swr`.
 | `npm run dev` | Dev server on http://localhost:3000 (expects the API on :8000) |
 | `NEXT_PUBLIC_MOCK=1 npm run dev` | **Standalone demo mode** — all endpoints served from deterministic in-browser mocks (`src/mocks/`), no backend needed |
 | `npm run build` | Production build (type-checks; must pass clean) |
+| `NEXT_PUBLIC_STATIC=1 npm run build` | **Static public build** — `output: "export"` to `out/`, all data from the bundle in `public/data/` (see below) |
 | `npm run lint` | ESLint (`eslint-config-next` + TS) |
+| `npm run test:unit` | `node --test` unit suite — incl. the TS↔Python rating-engine parity fixtures (`tests/`) |
 | `npm start` | Serve the production build |
 
 ## Environment
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | FastAPI base URL |
-| `NEXT_PUBLIC_MOCK` | unset | `1` = serve every request from `src/mocks/` |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | FastAPI base URL (local mode) |
+| `NEXT_PUBLIC_MOCK` | unset | `1` = serve every request from `src/mocks/` (ignored when STATIC) |
+| `NEXT_PUBLIC_STATIC` | unset | `1` = public GitHub Pages mode: static export, all data from `{basePath}/data/*.json`, AI-Rating computed client-side, local-only surfaces (my-team, refresh) hidden |
+| `NEXT_PUBLIC_BASE_PATH` | `""` | Next `basePath`, env-driven so the domain cutover is config-only. GitHub Actions passes `/fpl-ai-assistant` for the project-pages URL |
+
+## Static public mode (GitHub Pages)
+
+`NEXT_PUBLIC_STATIC=1` flips `src/lib/api.ts` onto `src/lib/staticBundle.ts`: every
+hook reads the daily model bundle from `{basePath}/data/<file>.json` and adapts it
+onto the same view models, so pages never branch on the mode. **The GitHub Actions
+workflow must copy the `fplai publish-static --out site-data` bundle into
+`frontend/public/data/` BEFORE `next build`** — the export both ships the JSON and
+uses `players.json` at build time to `generateStaticParams` one page per player
+(`/players/[code]`). With **no bundle at all** the build still succeeds as a
+dataless site shell (deploy-pages' intentional first-boot path: loud warning, one
+placeholder player page, empty states); a **partial** bundle (`meta.json` without
+`players.json`) fails the build loudly. `public/data/` is gitignored; for a local
+rehearsal:
+
+```sh
+cd backend && uv run fplai publish-static --out ../site-data
+mkdir -p ../frontend/public/data && cp ../site-data/*.json ../frontend/public/data/
+cd ../frontend && NEXT_PUBLIC_STATIC=1 npm run build   # -> out/
+```
+
+The AI-Rating page scores squads **client-side** in this mode via
+`src/lib/rating.ts`, an exact pure-TS port of the Python metric
+(`backend/src/fplai/optimizer/rating.py`): greedy best-XI per GW with formation
+minimums then fill, captain bonus = XI max,
+`score = clamp((team − floor)/(optimal − floor)) · 100`, bands
+ELITE/STRONG/SOLID/ROUGH/FODDER. The floor/optimal anchors ship precomputed in
+`rating.json`. Parity with Python is enforced by `npm run test:unit` against
+`tests/fixtures/rating-parity.json` (25 seeded real-data squads scored by the actual
+Python engine; tolerance 0.05).
 
 ## Pages
 

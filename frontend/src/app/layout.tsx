@@ -45,9 +45,24 @@ export default function RootLayout({
           {children}
         </main>
         <footer className="border-t border-hairline-soft">
-          <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between px-4 py-4 sm:px-6">
-            <span className="microlabel">PITCHSIDE / FPL QUANT DESK</span>
-            <span className="microlabel">MODELS, NOT VIBES</span>
+          <div className="mx-auto w-full max-w-[1280px] px-4 py-4 sm:px-6">
+            <div className="flex items-center justify-between">
+              <span className="microlabel">PITCHSIDE / FPL QUANT DESK</span>
+              <span className="microlabel">MODELS, NOT VIBES</span>
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-dim">
+              PITCHSIDE is an unofficial, open-source tool and is not affiliated with
+              the Premier League or FPL.{" "}
+              <a
+                href="https://github.com/bjarkiSigur7/fpl-ai-assistant"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-hairline underline-offset-2 hover:text-ink-mid"
+              >
+                Source on GitHub
+              </a>{" "}
+              · MIT License.
+            </p>
           </div>
         </footer>
       </body>

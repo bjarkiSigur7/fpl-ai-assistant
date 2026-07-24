@@ -1,12 +1,15 @@
 "use client";
 
 /**
- * Settings: entry-id persistence (localStorage), API wiring readout, model
- * manifest, and the data-refresh trigger with live status polling + log tail.
+ * Settings. Local mode: entry-id persistence (localStorage), API wiring readout,
+ * model manifest, and the data-refresh trigger with live status polling + log
+ * tail. Static (public) mode hides those local-only surfaces and shows the data
+ * feed's provenance instead: bundle freshness from meta.json and the GitHub
+ * Actions batch cadence.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { API_URL, MOCK, startRefresh, useDeskState, useRefreshStatus } from "@/lib/api";
+import { API_URL, MOCK, STATIC, startRefresh, useDeskState, useRefreshStatus } from "@/lib/api";
 import { seasonLabel, shortUtc } from "@/lib/format";
 import { Card, CardHead, PageTitle, StatusBadge, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
@@ -181,8 +184,69 @@ function RefreshCard() {
   );
 }
 
+/** Static (public) build: bundle freshness + the GitHub Actions batch cadence. */
+function DataFeedCard() {
+  const { data: state } = useDeskState();
+  const f = state?.data_freshness ?? null;
+  const gws = f?.predictions_gws ?? [];
+  return (
+    <Card>
+      <CardHead label="DATA FEED" right="STATIC BUNDLE" />
+      <div className="p-4">
+        <div className="mb-3 space-y-2.5 font-mono text-[12px]">
+          <div className="flex flex-wrap justify-between gap-2">
+            <span className="text-ink-dim">LAST MODEL RUN</span>
+            <span className="tnum text-ink-mid">
+              {f?.predictions_utc ? shortUtc(f.predictions_utc) : "…"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2">
+            <span className="text-ink-dim">SEASON SERVED</span>
+            <span className="text-ink-mid">{state ? seasonLabel(state.season) : "…"}</span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2">
+            <span className="text-ink-dim">PREDICTION WINDOW</span>
+            <span className="tnum text-ink-mid">
+              {gws.length ? `GW${gws[0]}–GW${gws[gws.length - 1]}` : "…"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2">
+            <span className="text-ink-dim">NEXT DEADLINE</span>
+            <span className="tnum text-ink-mid">
+              {state?.next_deadline_utc
+                ? `${state.next_gw !== null ? `GW${state.next_gw} · ` : ""}${shortUtc(state.next_deadline_utc)}`
+                : "…"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2">
+            <span className="text-ink-dim">MODEL</span>
+            <span className="tnum text-ink-mid">{state?.model_version ?? "…"}</span>
+          </div>
+        </div>
+        <p className="max-w-lg text-[13px] leading-relaxed text-ink-dim">
+          The full model batch runs daily on GitHub Actions — snapshot, rebuild,
+          predict, optimize — and publishes this site with a fresh data bundle. An
+          hourly deadline watch triggers an extra run in the final hours before each
+          gameweek deadline. Personalized my-team plans and manual refreshes are
+          local-only features of the open-source desk.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { isLoading } = useDeskState();
+  if (STATIC) {
+    return (
+      <div>
+        <PageTitle kicker="DESK CONFIGURATION" title="SETTINGS" />
+        <div className="space-y-5">
+          {isLoading ? <Skeleton className="h-64" /> : <DataFeedCard />}
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <PageTitle kicker="DESK CONFIGURATION" title="SETTINGS" />

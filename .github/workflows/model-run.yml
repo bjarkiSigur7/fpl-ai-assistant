@@ -1,0 +1,207 @@
+# Daily model batch: refresh data, run the model chain, publish the static
+# JSON bundle the GitHub Pages site consumes (deploy-pages.yml picks it up via
+# workflow_run), and append the day's raw FPL snapshot to the "data-archive"
+# orphan branch.
+#
+# Schedule: 05:30 UTC daily — after the overnight FPL price changes.
+# deadline-watch.yml additionally dispatches this workflow ~3h before each GW
+# deadline so the published bundle carries near-deadline prices/news/odds.
+#
+# Failure policy: DEGRADE, DON'T FAIL.
+#   * snapshot/build/predict are hard requirements — if they fail there is
+#     nothing fresh to publish; the job goes red (maintainer alert) and the
+#     previous Pages deploy simply stays live.
+#   * optimize/simulate are best-effort (continue-on-error). Both already
+#     protect quality on their own: the two-phase MILP guard + the pipeline
+#     sanity gate refuse to overwrite artifacts with a degenerate solve, so
+#     on failure the freshest VALID recommendation/chip artifacts on disk
+#     (possibly yesterday's, restored from the data cache) are what
+#     `fplai publish-static` bundles — and its own publish gate refuses bad
+#     or missing artifacts outright.
+name: model-run
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 5 * * *"
+
+permissions:
+  contents: write # push the day's snapshot to the data-archive branch
+
+# One model run at a time; a deadline-watch dispatch queues behind an
+# in-flight daily run instead of cancelling it.
+concurrency:
+  group: model-run
+  cancel-in-progress: false
+
+env:
+  # Data-cache key parts (repo variables, both optional):
+  #   FPLAI_SEASON             season start year (bump at each season rollover)
+  #   FPLAI_DATA_CACHE_VERSION bump to discard cached data/ and force a
+  #                            from-scratch bootstrap
+  SEASON: ${{ vars.FPLAI_SEASON || '2026' }}
+  CACHE_VERSION: ${{ vars.FPLAI_DATA_CACHE_VERSION || 'v1' }}
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Optional bookmaker-odds key (repo secret); the predict stage degrades
+      # gracefully without it (fplai.data.live falls back to cached odds or
+      # pure Dixon-Coles).
+      FPLAI_ODDS_API_KEY: ${{ secrets.FPLAI_ODDS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend (locked)
+        run: uv sync --locked
+
+      # data/ (raw + processed + models — NOT the http cache) persists between
+      # runs via actions/cache. restore-keys falls back to the newest
+      # same-season entry; the save step below always writes a fresh
+      # run-scoped key (cache entries are immutable).
+      - name: Restore data cache
+        id: data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/raw
+            data/processed
+            data/models
+          key: fpl-data-${{ env.SEASON }}-${{ env.CACHE_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            fpl-data-${{ env.SEASON }}-${{ env.CACHE_VERSION }}-
+
+      # Cold-cache self-heal (~40 min budget): full historical backfill,
+      # processed-table build and model training. Guarded by on-disk marker
+      # files rather than the cache-hit output so a partially restored or
+      # corrupted cache heals too. If the bootstrap exceeds the step timeout
+      # the job fails, but the always() cache save below keeps whatever was
+      # downloaded, so the next run resumes instead of restarting.
+      - name: Bootstrap data + models (cold-cache self-heal)
+        id: bootstrap
+        timeout-minutes: 50
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/data/models/manifest.json" ] \
+             && [ -f "$GITHUB_WORKSPACE/data/processed/players.parquet" ]; then
+            echo "warm cache — skipping bootstrap"
+            exit 0
+          fi
+          echo "::warning::data cache cold or incomplete — bootstrapping (backfill + build + train)"
+          uv run fplai backfill
+          uv run fplai build
+          uv run fplai train
+
+      - name: Snapshot (FPL API)
+        id: snapshot
+        timeout-minutes: 10
+        run: uv run fplai snapshot
+
+      - name: Build processed tables
+        id: build
+        timeout-minutes: 20
+        run: uv run fplai build
+
+      # Predict through the chip-window end (GW19 pre-GW20, else GW38) so
+      # `fplai simulate` has full coverage; scripts/through_gw.sh derives the
+      # end from the snapshot just taken (empty = no upcoming GW -> default
+      # window).
+      - name: Predict (through the chip-window end)
+        id: predict
+        timeout-minutes: 20
+        run: |
+          through_gw="$(bash "$GITHUB_WORKSPACE/scripts/through_gw.sh" \
+                          "$GITHUB_WORKSPACE/data/raw/fpl_api/snapshots")"
+          if [ -n "$through_gw" ]; then
+            echo "predicting through GW$through_gw"
+            uv run fplai predict --through-gw "$through_gw"
+          else
+            echo "no upcoming GW detected — default predict window"
+            uv run fplai predict
+          fi
+
+      # ~20 min budget via the existing CLI knobs: keep the stability panel at
+      # 15 noise re-solves (default 30; ~half the re-solve bill) and skip the
+      # greedy v1 chip-EV curves entirely (--no-chips, the other ~half of the
+      # full 35-min verdict) — the simulate step's Monte Carlo v2 curves
+      # supersede them and re-verdict recommendation.json's chip advice.
+      # Best-effort: on failure/timeout the previous valid artifacts (restored
+      # from the data cache) remain on disk for publish-static.
+      - name: Optimize (best-effort)
+        id: optimize
+        timeout-minutes: 30
+        continue-on-error: true
+        run: uv run fplai optimize --no-chips --stability-n 15
+
+      # ~2 min locally; generous cap for the slower runner. Writes the v2
+      # chip curves + chip_sim_report.json and folds probability verdicts into
+      # recommendation.json. Best-effort like optimize.
+      - name: Simulate chip timing (best-effort)
+        id: simulate
+        timeout-minutes: 25
+        continue-on-error: true
+        run: uv run fplai simulate --rollouts 1000 --seed 0
+
+      # The bundle contract lives in docs (SHARED CONTRACT: site-data/).
+      # publish-static's gate refuses stale/invalid artifacts; this step
+      # failing means there is nothing valid to ship and the previous Pages
+      # deploy stays live.
+      - name: Publish static bundle
+        id: publish
+        timeout-minutes: 10
+        run: uv run fplai publish-static --out "$GITHUB_WORKSPACE/site-data"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-data
+          path: site-data
+          if-no-files-found: error
+          retention-days: 30
+
+      # Append today's gzipped snapshot to the data-archive orphan branch
+      # (created gracefully on first run; idempotent per day). Runs even when
+      # a later model stage failed — the raw snapshot is still worth keeping.
+      - name: Archive snapshot to the data-archive branch
+        if: ${{ !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/archive_snapshot.sh
+
+      # Always save the (possibly partial) data dir so expensive bootstrap
+      # work is never lost; the run-scoped primary key never collides.
+      - name: Save data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/raw
+            data/processed
+            data/models
+          key: ${{ steps.data-cache.outputs.cache-primary-key }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### model-run outcomes"
+            echo ""
+            echo "| stage | outcome |"
+            echo "| --- | --- |"
+            echo "| bootstrap (self-heal) | ${{ steps.bootstrap.outcome }} |"
+            echo "| snapshot | ${{ steps.snapshot.outcome }} |"
+            echo "| build | ${{ steps.build.outcome }} |"
+            echo "| predict | ${{ steps.predict.outcome }} |"
+            echo "| optimize (best-effort) | ${{ steps.optimize.outcome }} |"
+            echo "| simulate (best-effort) | ${{ steps.simulate.outcome }} |"
+            echo "| publish-static | ${{ steps.publish.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

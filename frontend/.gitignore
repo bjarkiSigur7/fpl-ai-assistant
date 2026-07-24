@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# static data bundle (produced by `fplai publish-static`, copied in by CI)
+/public/data/

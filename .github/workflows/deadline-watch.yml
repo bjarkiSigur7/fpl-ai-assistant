@@ -1,0 +1,49 @@
+# Hourly cheap watch (~2 min budget): trigger one extra model-run ~3h before
+# each GW deadline so the published bundle carries near-deadline prices,
+# availability news and odds.
+#
+# Idempotent and quiet: the decision lives in scripts/deadline_check.sh, which
+# curls bootstrap-static (browser UA) and answers dispatch=true only when the
+# next deadline is 2.5-4.5h away (a 2h window checked hourly hits at least
+# once) AND no model-run was created in the last 3h (Actions API via
+# GITHUB_TOKEN — the window can't double-fire, and a recent daily run
+# suppresses redundant work). Off-season / API-outage / no-deadline paths all
+# exit 0 with dispatch=false.
+name: deadline-watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    # minute 7, not 0 — top-of-hour crons get delayed/dropped on shared runners
+    - cron: "7 * * * *"
+
+permissions:
+  contents: read
+  actions: write # read model-run history + dispatch model-run
+
+concurrency:
+  group: deadline-watch
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check deadline proximity
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/deadline_check.sh
+
+      # workflow_dispatch events created with GITHUB_TOKEN are exempt from the
+      # no-recursive-workflows rule, so this does start a model-run.
+      - name: Dispatch model-run
+        if: steps.check.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run model-run.yml --ref main

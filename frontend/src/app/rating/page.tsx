@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { fetchDreamTeam, rateTeam } from "@/lib/api";
+import { OFFLINE_HINT, fetchDreamTeam, rateTeam } from "@/lib/api";
 import { seasonLabel } from "@/lib/format";
 import { usePlayerIndex, type IndexedPlayer } from "@/lib/playerIndex";
 import {
@@ -197,10 +197,7 @@ export default function RatingPage() {
 
   if (error) {
     return (
-      <EmptyState
-        title="NO PLAYER POOL"
-        detail="The rating page needs the predictions feed for its player pool. Start the backend (uvicorn fplai.api.app:app) or run with NEXT_PUBLIC_MOCK=1 for the standalone demo."
-      />
+      <EmptyState title="NO PLAYER POOL" detail={OFFLINE_HINT} />
     );
   }
 
@@ -282,7 +279,7 @@ export default function RatingPage() {
             {engineDown ? (
               <EmptyState
                 title="RATING ENGINE OFFLINE"
-                detail="POST /api/rate-team is not answering. Start the backend (uvicorn fplai.api.app:app) or run with NEXT_PUBLIC_MOCK=1 for the standalone demo."
+                detail={OFFLINE_HINT}
                 action={
                   <button
                     onClick={() => void evaluate()}

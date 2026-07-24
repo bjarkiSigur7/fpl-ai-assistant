@@ -456,6 +456,8 @@ export interface StateResponse {
   total_players: number;
   data_freshness: DataFreshness | null;
   model: ModelManifest | null;
+  /** Compact model tag when no full manifest is available (static bundle meta). */
+  model_version?: string | null;
 }
 
 /** Horizon-wide predictions view (assembled from per-GW ApiPredictionsResponse pages). */

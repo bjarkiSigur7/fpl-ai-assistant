@@ -1788,3 +1788,47 @@ def run_backtest(season: int, gws: Sequence[int] | None = None) -> Any:
     gw_note = f" GWs {list(gws)}" if gws else ""
     console.print(f"[bold]backtest[/bold]: season {season}{gw_note}")
     return harness.run(season=season, gws=list(gws) if gws is not None else None)
+
+
+# ---------------------------------------------------------------------------
+# publish-static (the GitHub-Pages data bundle)
+# ---------------------------------------------------------------------------
+
+
+def run_publish_static(out_dir: Path | None = None) -> Any:
+    """Publish the static site-data bundle from ``data/processed/`` artifacts.
+
+    Thin wrapper around :func:`fplai.publish.build_bundle` (the shared static-data
+    contract the GitHub-Pages frontend consumes).  ``meta.json``'s deadline comes
+    from the newest raw FPL snapshot and ``model_version`` from the models
+    manifest; per-file byte sizes are printed and returned.
+
+    Args:
+        out_dir: Bundle directory (default ``<repo>/site-data``, gitignored).
+
+    Returns:
+        The :class:`fplai.publish.BundleReport`.
+
+    Raises:
+        FileNotFoundError: when required artifacts (predictions, roster) are missing.
+        ValueError: when the bundle exceeds the size budget or artifacts are
+            mutually inconsistent.
+    """
+    from fplai import config
+    from fplai.publish import MAX_BUNDLE_BYTES, build_bundle
+
+    out = Path(out_dir) if out_dir is not None else config.REPO_ROOT / "site-data"
+    console.print(f"[bold]publish-static[/bold]: {config.PROCESSED_DIR} -> {out}")
+    report = build_bundle(
+        config.PROCESSED_DIR, out, raw_dir=config.RAW_DIR, models_dir=config.MODELS_DIR
+    )
+    for name, size in report.files.items():
+        console.print(f"  {name:<22} {size:>10,} B")
+    console.print(
+        f"  [bold]total[/bold] {report.total_bytes:>21,} B "
+        f"(budget {MAX_BUNDLE_BYTES:,} B) — season {report.season}, "
+        f"GW{report.window[0]}..{report.window[1]}"
+    )
+    if report.missing:
+        console.print(f"  [yellow]missing optional artifacts:[/yellow] {', '.join(report.missing)}")
+    return report

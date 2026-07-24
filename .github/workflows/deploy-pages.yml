@@ -1,0 +1,137 @@
+# Build the static PITCHSIDE site and deploy it to GitHub Pages.
+#
+# Triggers:
+#   * workflow_run on a successful model-run (main): the daily/pre-deadline
+#     data refresh — the bundle comes from THAT run's `site-data` artifact.
+#   * push to main: code deploys — the bundle is reused from the most recent
+#     successful model-run's artifact. This is the simplest reliable
+#     mechanism: no model data is needed on this runner, model-run publishes
+#     daily so the newest artifact is at most ~24h old (30-day retention),
+#     and both triggers therefore ship byte-identical data for a given day.
+#     Before the FIRST successful model-run the site deploys without data
+#     (loud warning, pages render their empty/loading states); if successful
+#     model-runs exist but every artifact download fails, the deploy aborts
+#     rather than replace a data-carrying live site with an empty one.
+name: deploy-pages
+
+on:
+  workflow_run:
+    workflows: [model-run]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read # download the site-data artifact from model-run
+
+# Serialise Pages deploys; never cancel an in-flight production deployment
+# (the queued newest run still wins afterwards).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # push events always build; workflow_run events only on model-run success.
+    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Fetch bundle from the triggering model-run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: site-data
+          path: site-data
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Fetch newest bundle (code push)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ids="$(gh run list --workflow model-run.yml --status success --branch main \
+                   --limit 5 --json databaseId --jq '.[].databaseId')"
+          if [ -z "$ids" ]; then
+            echo "::warning::no successful model-run yet — deploying the site without a data bundle"
+            exit 0
+          fi
+          for id in $ids; do
+            if gh run download "$id" --name site-data --dir site-data; then
+              echo "bundle reused from model-run $id"
+              exit 0
+            fi
+          done
+          echo "::error::successful model-runs exist but no site-data artifact could be downloaded — refusing to deploy a data-less site over a live one"
+          exit 1
+
+      - name: Copy bundle into the site
+        run: |
+          mkdir -p frontend/public/data
+          if [ -f site-data/meta.json ]; then
+            cp -R site-data/. frontend/public/data/
+            echo "bundle generated_utc: $(jq -r .generated_utc frontend/public/data/meta.json)"
+          else
+            echo "::warning::no data bundle — the site will render its empty states"
+          fi
+
+      - name: Set up Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true # auto-enable Pages (source: GitHub Actions) on first deploy
+
+      - name: Install frontend (locked)
+        working-directory: frontend
+        run: npm ci
+
+      # basePath is env-driven so the custom-domain cutover is config-only:
+      # unset -> /fpl-ai-assistant (bjarkisigur7.github.io/fpl-ai-assistant);
+      # set the repo variable PAGES_BASE_PATH to "/" to serve from a domain
+      # root (empty basePath). (A literal empty repo variable would be
+      # indistinguishable from unset in ${{ }} expressions, hence the "/"
+      # sentinel handled here in shell.)
+      - name: Build static export
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_STATIC: "1"
+          PAGES_BASE_PATH: ${{ vars.PAGES_BASE_PATH }}
+        run: |
+          base_path="${PAGES_BASE_PATH:-/fpl-ai-assistant}"
+          if [ "$base_path" = "/" ]; then base_path=""; fi
+          echo "NEXT_PUBLIC_BASE_PATH='$base_path'"
+          NEXT_PUBLIC_BASE_PATH="$base_path" npm run build
+
+      - name: Disable Jekyll processing
+        run: touch frontend/out/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,75 @@
+# CI: backend offline tests + lint, frontend lint + builds.
+# Runs on every push to main and every pull request; superseded runs on the
+# same ref are cancelled.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Offline test suite
+        run: uv run pytest -q -m "not live"
+
+      - name: Ruff
+        run: uv run ruff check src tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      # Both build flavours must stay green: the default (local, API-backed)
+      # build and the static-export public build that deploy-pages.yml ships
+      # to GitHub Pages.
+      - name: Build (default)
+        run: npm run build
+
+      - name: Build (static export, public flags)
+        env:
+          NEXT_PUBLIC_STATIC: "1"
+          NEXT_PUBLIC_BASE_PATH: /fpl-ai-assistant
+        run: npm run build
