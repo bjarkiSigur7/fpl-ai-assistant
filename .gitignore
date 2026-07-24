@@ -39,3 +39,6 @@ site-data/
 scratch/
 scratchpad/
 tmp/
+
+# Test fixtures are small and must be tracked (global *.parquet above excludes them)
+!backend/tests/fixtures/*.parquet
