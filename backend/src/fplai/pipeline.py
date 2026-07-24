@@ -1507,6 +1507,24 @@ def run_optimize(
             chip_sim=chip_sim,
         )
 
+    # ---- degenerate-solve gate ---------------------------------------------------
+    # A healthy squad's first-GW expected points can't collapse far below what the
+    # prediction frame obviously supports (observed failure: a timeout incumbent =
+    # cheapest legal squad at 12.2 xP while top players summed to 60+). Compare
+    # against a cheap proxy bound — the sum of the 11 highest xp values in the
+    # first planned GW — and refuse to publish artifacts under 40% of it.
+    first_gw_xp = xp.loc[xp["gw"] == start_gw, "xp"]
+    if len(first_gw_xp) >= 11:
+        proxy_bound = float(first_gw_xp.nlargest(11).sum())
+        if rec.expected_points < 0.4 * proxy_bound:
+            raise RuntimeError(
+                f"optimizer returned a degenerate plan (GW{start_gw} expected "
+                f"{rec.expected_points:.1f} xP vs ~{proxy_bound:.0f} attainable) — "
+                "artifacts NOT overwritten; previous recommendation stays live. "
+                "This usually means the MILP timed out on a trivial incumbent; "
+                "re-run with a longer time limit."
+            )
+
     # ---- artifacts (the API serves these files verbatim) -------------------------
     out.mkdir(parents=True, exist_ok=True)
     rec_path = out / "recommendation.json"

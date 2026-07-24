@@ -128,6 +128,13 @@ class SolveParams(BaseModel):
         "an already-active chip from the state stays committed regardless "
         "(it cannot be un-played). This is the optimizer.chips coordination field.",
     )
+    two_phase: bool = Field(
+        default=True,
+        description="Chip-enabled solves first solve the no-chips restriction (always "
+        "feasible for the full problem) as a quality floor, then the full chip solve, "
+        "returning the better plan — guards against timeout incumbents that are "
+        "trivial cheap-squad feasibility solutions.",
+    )
     banned_chip_gws: dict[int, frozenset[str]] = Field(
         default_factory=dict,
         description='gw -> chip kinds ("wc") or instance ids ("wc1") not playable that '
@@ -1393,6 +1400,42 @@ def solve_plan(
         RuntimeError: when the time limit expires with no feasible incumbent.
     """
     params = params if params is not None else SolveParams()
+
+    # Two-phase guard for chip-enabled solves. The all-chips MILP tree is hard: on
+    # unlucky instances HiGHS's time limit bites while its only incumbent is the
+    # trivial feasibility solution (~cheapest legal squad maximizing bank value —
+    # observed live on 2026-07-24: gap 324%, GW1 xP 12.2 vs 65+ attainable). The
+    # no-chips restriction is ALWAYS feasible for the full problem (chip binaries 0),
+    # so its optimum is a hard floor: solve it first on a slice of the budget, then
+    # the full chip solve, and return whichever plan scores higher. This makes
+    # solve_plan's quality monotone in the chip relaxation by construction.
+    chips_in_play = (
+        params.two_phase
+        and not params.no_chips
+        and not params.forced_chips
+        and (state is None or (state.active_chip is None and bool(state.chips_available)))
+    )
+    if chips_in_play:
+        a_budget = max(15.0, 0.4 * params.time_limit_s)
+        base = params.model_copy(
+            update={"two_phase": False, "no_chips": True, "time_limit_s": a_budget}
+        )
+        floor_plan = solve_plan(xp, prices, state, horizon=horizon, params=base)
+        full = params.model_copy(
+            update={"two_phase": False, "time_limit_s": max(15.0, params.time_limit_s - a_budget)}
+        )
+        chip_plan = solve_plan(xp, prices, state, horizon=horizon, params=full)
+        if chip_plan.objective >= floor_plan.objective - 1e-9:
+            return chip_plan
+        logger.warning(
+            "chip solve returned a worse incumbent than the no-chips floor "
+            "(%.2f < %.2f, gap %.1f%%) — returning the no-chips plan",
+            chip_plan.objective,
+            floor_plan.objective,
+            100.0 * (chip_plan.gap if chip_plan.gap is not None else float("nan")),
+        )
+        return floor_plan
+
     price_of, pos_of, club_of = _index_prices(prices)
 
     if state is not None:
