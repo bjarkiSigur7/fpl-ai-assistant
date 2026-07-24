@@ -133,7 +133,7 @@ export function RatingResult({
   }, []);
 
   return (
-    <div ref={ref} role="status" className="scroll-mt-4">
+    <div ref={ref} id="rating-result" role="status" className="scroll-mt-4">
       <span className="sr-only">
         Squad rated {result.score.toFixed(1)} out of 100 — {result.verdict}.
       </span>

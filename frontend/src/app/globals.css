@@ -150,6 +150,31 @@ body {
   }
 }
 
+/* hidden scrollbar for mobile rails (nav, plan cards, wide tables) — the
+   scroll affordance is a right-edge fade instead (see <ScrollFade/>) */
+.noscrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.noscrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* touch targets: extend a small control's effective hit area to >=44x44px on
+   coarse pointers without growing its visual size. The element must already be
+   positioned (add `relative` unless it is absolutely placed). */
+@media (pointer: coarse) {
+  .hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
 /* thin scrollbars for log tails / timelines */
 .deskscroll::-webkit-scrollbar {
   height: 8px;

@@ -7,7 +7,7 @@
  * tooltips on bars, tabular numerals, text never set in series colors.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** Validated dark-surface categorical series colors — use in this order. */
 export const SERIES: readonly string[] = ["#3987e5", "#d95926", "#199e70", "#c98500"];
@@ -19,6 +19,24 @@ const INK_DIM = "#898781";
 const MONO = "var(--font-plex-mono)";
 
 const fmt = (v: number, digits = 1) => v.toFixed(digits);
+
+/**
+ * True below the sm breakpoint (phone widths) — charts switch to their compact
+ * mobile variant there. False during SSR/first paint (desktop layout), then
+ * corrected on mount; desktop rendering is untouched (the dashboard's chart
+ * column is narrow even at 1440, so a container-width probe would misfire).
+ */
+function useIsNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
 
 function niceMax(v: number): number {
   if (v <= 0) return 1;
@@ -95,8 +113,12 @@ export function LineChart({
   const [hoverI, setHoverI] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Compact mobile variant: sparser x-ticks, pruned direct labels (dropped
+  // ones move to a legend), slightly taller plot.
+  const compact = useIsNarrowViewport();
+
   const VW = vw;
-  const VH = vh;
+  const VH = vh + (compact ? 36 : 0);
   const pad = { l: 30, r: 78, t: 10, b: 20 };
   const iw = VW - pad.l - pad.r;
   const ih = VH - pad.t - pad.b;
@@ -109,21 +131,35 @@ export function LineChart({
 
   const gridLines = [0.25, 0.5, 0.75, 1].map((f) => f * yMax);
 
-  // Direct labels at line ends, pushed apart so they never collide.
+  const tickStep = compact ? 3 : n <= 10 ? 1 : Math.ceil(n / 10);
+
+  // Direct labels at line ends. Wide: pushed apart so they never collide.
+  // Compact: collision pass keeps the highest-priority (= series-order) label
+  // of any cluster within MIN_GAP; the dropped ones appear in the legend only.
   const MIN_GAP = 12;
-  const labelYs: number[] = (() => {
+  const { labelYs, droppedLabels } = (() => {
     const ends = series.map((s, si) => {
       const lastIdx = s.values.reduce<number>((acc, v, i) => (v !== null ? i : acc), 0);
       const v = s.values[lastIdx];
       return { si, y: v !== null ? y(v) : VH - pad.b };
     });
-    const sorted = [...ends].sort((a, b) => a.y - b.y);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].y - sorted[i - 1].y < MIN_GAP) sorted[i].y = sorted[i - 1].y + MIN_GAP;
-    }
     const out: number[] = [];
-    for (const e of sorted) out[e.si] = e.y;
-    return out;
+    const dropped = new Set<number>();
+    if (compact) {
+      const kept: number[] = [];
+      for (const e of ends) {
+        if (kept.some((ky) => Math.abs(ky - e.y) < MIN_GAP)) dropped.add(e.si);
+        else kept.push(e.y);
+        out[e.si] = e.y;
+      }
+    } else {
+      const sorted = [...ends].sort((a, b) => a.y - b.y);
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].y - sorted[i - 1].y < MIN_GAP) sorted[i].y = sorted[i - 1].y + MIN_GAP;
+      }
+      for (const e of sorted) out[e.si] = e.y;
+    }
+    return { labelYs: out, droppedLabels: dropped };
   })();
 
   const onMove = (e: React.PointerEvent<SVGRectElement>) => {
@@ -188,7 +224,7 @@ export function LineChart({
               {hoverI !== null && s.values[hoverI] !== null ? (
                 <circle cx={x(hoverI)} cy={y(s.values[hoverI]!)} r={3} fill={SERIES[si % SERIES.length]} />
               ) : null}
-              {lastVal !== null ? (
+              {lastVal !== null && !droppedLabels.has(si) ? (
                 <g>
                   <circle
                     cx={x(lastIdx) + 7}
@@ -211,7 +247,7 @@ export function LineChart({
           );
         })}
         {xLabels.map((l, i) =>
-          n <= 10 || i % Math.ceil(n / 10) === 0 ? (
+          i % tickStep === 0 ? (
             <text key={i} x={x(i)} y={VH - 5} textAnchor="middle" fontSize={9} fill={INK_DIM} fontFamily={MONO}>
               {l}
             </text>
@@ -230,6 +266,23 @@ export function LineChart({
           }}
         />
       </svg>
+      {compact && droppedLabels.size > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 px-1">
+          {series.map((s, si) => (
+            <span
+              key={s.label}
+              className="inline-flex items-center gap-1.5 font-mono text-[10px] text-ink-dim"
+            >
+              <span
+                aria-hidden="true"
+                className="inline-block h-[2px] w-3 rounded-full"
+                style={{ background: SERIES[si % SERIES.length] }}
+              />
+              {s.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {tip ? <Tip tip={tip} /> : null}
     </div>
   );
@@ -414,9 +467,13 @@ export function HistoryChart({ data }: { data: HistoryPoint[] }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  const VW = 1000;
+  // Compact mobile variant: a narrower viewBox keeps type legible (~9px on
+  // screen instead of microscopic 1000-unit downscaling) with sparser ticks.
+  const compact = useIsNarrowViewport();
+
+  const VW = compact ? 420 : 1000;
   const VH = 220;
-  const pad = { l: 34, r: 50, t: 12, b: 22 };
+  const pad = { l: 34, r: compact ? 34 : 50, t: 12, b: 22 };
   const iw = VW - pad.l - pad.r;
   const ih = VH - pad.t - pad.b;
   const n = data.length;
@@ -495,7 +552,7 @@ export function HistoryChart({ data }: { data: HistoryPoint[] }) {
           </text>
         ) : null}
         {data.map((d, i) =>
-          i % Math.ceil(n / 11) === 0 ? (
+          i % Math.ceil(n / (compact ? 6 : 11)) === 0 ? (
             <text key={d.gw} x={x(i)} y={VH - 5} textAnchor="middle" fontSize={9} fill={INK_DIM} fontFamily={MONO}>
               {d.gw}
             </text>

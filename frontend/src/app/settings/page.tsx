@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_URL, MOCK, STATIC, startRefresh, useDeskState, useRefreshStatus } from "@/lib/api";
-import { seasonLabel, shortUtc } from "@/lib/format";
+import { gwWindow, seasonLabel, shortUtc } from "@/lib/format";
 import { Card, CardHead, PageTitle, StatusBadge, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
 
@@ -51,7 +51,7 @@ function EntryCard() {
           />
           <button
             type="submit"
-            className="rounded bg-pitch px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0d0d0d] transition-opacity hover:opacity-90"
+            className="hit relative rounded bg-pitch px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0d0d0d] transition-opacity hover:opacity-90"
           >
             SAVE
           </button>
@@ -59,7 +59,7 @@ function EntryCard() {
             <button
               type="button"
               onClick={() => setEntryId(null)}
-              className="rounded border border-hairline px-4 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-ink-dim transition-colors hover:text-ink"
+              className="hit relative rounded border border-hairline px-4 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-ink-dim transition-colors hover:text-ink"
             >
               CLEAR
             </button>
@@ -92,7 +92,7 @@ function WiringCard() {
           <span className="text-ink-dim">PREDICTIONS</span>
           <span className="tnum text-ink-mid">
             {state?.data_freshness?.predictions_utc
-              ? `${shortUtc(state.data_freshness.predictions_utc)} · GW${state.data_freshness.predictions_gws.join(",")}`
+              ? `${shortUtc(state.data_freshness.predictions_utc)} · ${gwWindow(state.data_freshness.predictions_gws)}`
               : "none"}
           </span>
         </div>
@@ -206,9 +206,7 @@ function DataFeedCard() {
           </div>
           <div className="flex flex-wrap justify-between gap-2">
             <span className="text-ink-dim">PREDICTION WINDOW</span>
-            <span className="tnum text-ink-mid">
-              {gws.length ? `GW${gws[0]}–GW${gws[gws.length - 1]}` : "…"}
-            </span>
+            <span className="tnum text-ink-mid">{gws.length ? gwWindow(gws) : "…"}</span>
           </div>
           <div className="flex flex-wrap justify-between gap-2">
             <span className="text-ink-dim">NEXT DEADLINE</span>

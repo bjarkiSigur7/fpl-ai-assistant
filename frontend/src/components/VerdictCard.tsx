@@ -42,13 +42,13 @@ export function VerdictCard({ rec }: { rec: Recommendation }) {
       >
         GW{rec.gw}
       </div>
-      <div className="relative px-5 py-6 sm:px-7 sm:py-8">
+      <div className="relative py-6 pl-5 pr-7 sm:py-8 sm:pl-7 sm:pr-7">
         <div className="microlabel reveal mb-3" style={{ animationDelay: "0ms" }}>
           THE VERDICT — GW{rec.gw} · SEASON {rec.season}-
           {String((rec.season + 1) % 100).padStart(2, "0")}
         </div>
         <h2
-          className="display reveal text-pitch-bright text-[min(13vw,92px)]"
+          className="display reveal text-pitch-bright text-[clamp(34px,11vw,92px)]"
           style={{ animationDelay: "60ms" }}
         >
           {verdictWord(rec.action)}

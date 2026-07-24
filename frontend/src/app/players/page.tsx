@@ -13,6 +13,7 @@ import { moneyBare, xp2 } from "@/lib/format";
 import { usePlayerIndex, type IndexedPlayer } from "@/lib/playerIndex";
 import { POSITIONS, type Position } from "@/lib/types";
 import { Sparkbar, SparkbarLegend } from "@/components/charts";
+import { ScrollFade } from "@/components/ScrollFade";
 import { Card, EmptyState, PageTitle, RiskMark, Skeleton } from "@/components/ui";
 
 type SortKey = "name" | "pos" | "club" | "price" | "xp" | "xph" | "q0";
@@ -30,6 +31,17 @@ const DEFAULT_DIR: Record<SortKey, 1 | -1> = {
   xp: -1,
   xph: -1,
   q0: 1,
+};
+
+/** <sm sort control labels — the column headers are hidden with the table. */
+const SORT_LABEL: Record<SortKey, string> = {
+  xp: "xP NEXT GW",
+  xph: "Σ HORIZON xP",
+  price: "PRICE",
+  name: "NAME",
+  club: "CLUB",
+  pos: "POSITION",
+  q0: "RISK q0",
 };
 
 function compare(a: IndexedPlayer, b: IndexedPlayer, sort: Sort, gw: number): number {
@@ -79,7 +91,7 @@ function Th({
     >
       <button
         onClick={() => onSort(k)}
-        className={`microlabel inline-flex items-center gap-1 ${active ? "!text-ink" : "hover:text-ink-mid"}`}
+        className={`microlabel hit relative inline-flex items-center gap-1 ${active ? "!text-ink" : "hover:text-ink-mid"}`}
       >
         {label}
         <span aria-hidden="true" className={active ? "text-ink" : "text-transparent"}>
@@ -150,7 +162,7 @@ export default function PlayersPage() {
               role="tab"
               aria-selected={pos === p}
               onClick={() => setPos(p)}
-              className={`rounded px-2.5 py-1.5 font-mono text-[10.5px] tracking-[0.12em] ${
+              className={`hit relative rounded px-2.5 py-1.5 font-mono text-[10.5px] tracking-[0.12em] ${
                 pos === p ? "bg-raised text-ink" : "text-ink-dim hover:text-ink-mid"
               }`}
             >
@@ -171,6 +183,22 @@ export default function PlayersPage() {
             </option>
           ))}
         </select>
+        {/* <sm: the column-header sort lives in the hidden table — surface it */}
+        <select
+          value={sort.key}
+          onChange={(e) => {
+            const k = e.target.value as SortKey;
+            setSort({ key: k, dir: DEFAULT_DIR[k] });
+          }}
+          aria-label="Sort players"
+          className="rounded border border-hairline bg-surface px-2 py-1.5 font-mono text-[11px] text-ink-mid outline-none focus:border-ink-dim sm:hidden"
+        >
+          {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+            <option key={k} value={k}>
+              SORT — {SORT_LABEL[k]}
+            </option>
+          ))}
+        </select>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -183,7 +211,7 @@ export default function PlayersPage() {
         </span>
       </div>
 
-      <Card className="overflow-x-auto deskscroll">
+      <Card>
         {!index || isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 12 }, (_, i) => (
@@ -191,7 +219,53 @@ export default function PlayersPage() {
             ))}
           </div>
         ) : (
-          <table className="w-full min-w-[760px] border-collapse text-left">
+          <>
+            {/* <sm: compact mobile rows — name + club/pos/price small, xP
+                prominent right, sparkbar spanning the row. Tap navigates. */}
+            <ul className="sm:hidden">
+              {rows.map((p) => {
+                const row = p.firstRow;
+                const xpGw = p.xpByGw.get(gw) ?? 0;
+                return (
+                  <li key={p.player_code} className="border-b border-hairline-soft last:border-b-0">
+                    <button
+                      onClick={() => router.push(`/players/${p.player_code}`)}
+                      className="block w-full px-3.5 py-2.5 text-left transition-colors hover:bg-raised"
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 truncate text-[13.5px] font-medium text-ink">
+                          {p.web_name}
+                          {row.n_fixtures > 1 ? (
+                            <span className="ml-1.5 rounded bg-raised px-1 py-0.5 font-mono text-[9px] text-ink-mid">
+                              DGW
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="shrink-0 font-mono text-[15px] font-semibold tnum text-ink">
+                          {xp2(xpGw)}
+                          <span className="ml-1 text-[9px] font-normal tracking-[0.08em] text-ink-dim">
+                            xP
+                          </span>
+                        </span>
+                      </div>
+                      <div className="mt-0.5 flex items-center justify-between gap-3 font-mono text-[10px] text-ink-dim">
+                        <span className="tnum">
+                          {p.team_short} · {p.position} · £{moneyBare(p.price)} · Σ{" "}
+                          {p.xpHorizon.toFixed(1)}
+                        </span>
+                        <RiskMark q0={p.q0ByGw.get(gw) ?? 0} />
+                      </div>
+                      <div className="mt-1.5">
+                        <Sparkbar components={row} max={maxXp} />
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {/* ≥sm: the full table inside a fading scroll container */}
+            <ScrollFade fade="surface" className="hidden sm:block">
+              <table className="w-full min-w-[760px] border-collapse text-left">
             <thead>
               <tr className="border-b border-hairline">
                 <Th label="PLAYER" k="name" sort={sort} onSort={onSort} />
@@ -243,7 +317,9 @@ export default function PlayersPage() {
                 );
               })}
             </tbody>
-          </table>
+              </table>
+            </ScrollFade>
+          </>
         )}
       </Card>
     </div>

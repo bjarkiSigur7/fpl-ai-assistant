@@ -6,12 +6,13 @@
  * support bars from the noise re-solves.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { OFFLINE_HINT, useChipCurves, useRecommendation } from "@/lib/api";
 import { moneyBare, xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
 import { chipName, type ChipAdvice, type ChipCurvePoint, type GwPlan } from "@/lib/types";
 import { MiniBarChart } from "@/components/charts";
+import { ScrollFade } from "@/components/ScrollFade";
 import { Card, CardHead, EmptyState, PageTitle, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
 
@@ -30,7 +31,7 @@ function GwCard({
   }));
   return (
     <div
-      className={`w-56 shrink-0 rounded-md border bg-surface ${
+      className={`w-56 shrink-0 snap-start scroll-ml-4 rounded-md border bg-surface ${
         first ? "border-ink-dim/60" : "border-hairline"
       }`}
     >
@@ -196,15 +197,35 @@ function ChipMultiples({
             {nRollouts != null ? ` · N=${nRollouts.toLocaleString("en-GB")}` : ""}
           </p>
           {assumptions ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
-              Assumptions: {assumptions.join(" · ")}.
-            </p>
+            <>
+              {/* <sm: collapsible so the sim small print doesn't dominate */}
+              <details className="group mt-1 sm:hidden">
+                <summary className="hit relative inline-flex cursor-pointer list-none items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim [&::-webkit-details-marker]:hidden">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block text-[8px] transition-transform group-open:rotate-90 motion-reduce:transition-none"
+                  >
+                    ▶
+                  </span>
+                  SIM ASSUMPTIONS
+                </summary>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
+                  Assumptions: {assumptions.join(" · ")}.
+                </p>
+              </details>
+              <p className="mt-1 hidden text-[11px] leading-relaxed text-ink-dim sm:block">
+                Assumptions: {assumptions.join(" · ")}.
+              </p>
+            </>
           ) : null}
         </div>
       ) : null}
     </div>
   );
 }
+
+/** <sm: only the top entries show until expanded; ≥sm always shows the lot. */
+const STABILITY_TOP = 15;
 
 function StabilityBars({
   entries,
@@ -213,6 +234,7 @@ function StabilityBars({
   entries: { move: string; support_pct: number }[];
   index: PlayerIndex;
 }) {
+  const [showAll, setShowAll] = useState(false);
   if (entries.length === 0) {
     return (
       <p className="px-4 py-6 text-[13px] text-ink-dim">
@@ -223,8 +245,13 @@ function StabilityBars({
   const sorted = [...entries].sort((a, b) => b.support_pct - a.support_pct);
   return (
     <div className="space-y-2.5 p-4">
-      {sorted.map((e) => (
-        <div key={e.move} className="flex items-center gap-3">
+      {sorted.map((e, i) => (
+        <div
+          key={e.move}
+          className={`items-center gap-3 ${
+            i >= STABILITY_TOP && !showAll ? "hidden sm:flex" : "flex"
+          }`}
+        >
           <span className="w-40 shrink-0 truncate text-[12px] text-ink-mid">
             {index.humanizeMove(e.move)}
           </span>
@@ -239,6 +266,14 @@ function StabilityBars({
           </span>
         </div>
       ))}
+      {sorted.length > STABILITY_TOP ? (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="microlabel hit relative underline decoration-hairline underline-offset-4 hover:text-ink sm:hidden"
+        >
+          {showAll ? `SHOW TOP ${STABILITY_TOP}` : `SHOW ALL (${sorted.length})`}
+        </button>
+      ) : null}
       <p className="pt-1 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim">
         % of noise re-solves agreeing with each this-GW move
       </p>
@@ -297,11 +332,13 @@ export default function PlannerPage() {
           right={horizonGws.length ? `GW${horizonGws[0]}–${horizonGws[horizonGws.length - 1]}` : undefined}
         />
         {gws.length ? (
-          <div className="deskscroll flex gap-3 overflow-x-auto p-4">
-            {gws.map((g, i) => (
-              <GwCard key={g.gw} plan={g} index={index} first={i === 0} />
-            ))}
-          </div>
+          <ScrollFade fade="surface" arrow innerClassName="snap-x snap-mandatory">
+            <div className="flex gap-3 p-4">
+              {gws.map((g, i) => (
+                <GwCard key={g.gw} plan={g} index={index} first={i === 0} />
+              ))}
+            </div>
+          </ScrollFade>
         ) : (
           <p className="px-4 py-6 text-[13px] text-ink-dim">
             No solved plan attached to this recommendation.

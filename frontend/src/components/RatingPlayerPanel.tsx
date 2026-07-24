@@ -64,7 +64,7 @@ function PoolRow({
           isSelected ? `Remove ${p.web_name} from squad` : `Add ${p.web_name} to squad`
         }
         title={isSelected ? "IN SQUAD — REMOVE" : (blocked ?? "ADD TO SQUAD")}
-        className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border font-mono text-[12px] leading-none transition-colors ${
+        className={`hit relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border font-mono text-[12px] leading-none transition-colors ${
           isSelected
             ? "border-pitch-deep bg-pitch/15 text-pitch-bright hover:border-neg hover:bg-transparent hover:text-neg"
             : disabled
@@ -156,7 +156,7 @@ export function RatingPlayerPanel({
               role="tab"
               aria-selected={pos === p}
               onClick={() => setPos(p)}
-              className={`rounded px-2.5 py-1 font-mono text-[10.5px] tracking-[0.12em] ${
+              className={`hit relative rounded px-2.5 py-1 font-mono text-[10.5px] tracking-[0.12em] ${
                 pos === p ? "bg-raised text-ink" : "text-ink-dim hover:text-ink-mid"
               }`}
             >

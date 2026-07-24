@@ -36,6 +36,13 @@ export function seasonSlash(season: number): string {
   return `${season}/${String((season + 1) % 100).padStart(2, "0")}`;
 }
 
+/** Compact GW window: "GW1–GW19" (or "GW7" for a single-GW list). */
+export function gwWindow(gws: number[]): string {
+  if (gws.length === 0) return "";
+  if (gws.length === 1) return `GW${gws[0]}`;
+  return `GW${gws[0]}–GW${gws[gws.length - 1]}`;
+}
+
 export interface Countdown {
   days: number;
   hours: number;

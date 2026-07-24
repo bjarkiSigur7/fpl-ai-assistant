@@ -15,9 +15,19 @@ import type { FixturePrediction } from "@/lib/types";
 import { HistoryChart, Sparkbar, SparkbarLegend } from "@/components/charts";
 import { Card, CardHead, EmptyState, RiskMark, Skeleton } from "@/components/ui";
 
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatTile({
+  label,
+  value,
+  sub,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  className?: string;
+}) {
   return (
-    <div className="rounded border border-hairline-soft bg-raised px-3 py-2.5">
+    <div className={`rounded border border-hairline-soft bg-raised px-3 py-2.5 ${className}`}>
       <div className="microlabel mb-1">{label}</div>
       <div className="font-mono text-[18px] font-semibold tnum text-ink">{value}</div>
       {sub ? <div className="font-mono text-[10px] text-ink-dim">{sub}</div> : null}
@@ -113,7 +123,7 @@ export function PlayerDetailClient() {
   return (
     <div className="space-y-5">
       <div>
-        <Link href="/players" className="microlabel hover:text-ink">
+        <Link href="/players" className="microlabel hit relative inline-block hover:text-ink">
           ← PLAYERS
         </Link>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
@@ -139,7 +149,12 @@ export function PlayerDetailClient() {
         />
         <StatTile label="HORIZON xP" value={totals.horizonXp.toFixed(1)} sub={`${player.upcoming.length} FIXTURES`} />
         <StatTile label="SEASON PTS" value={String(totals.pts)} sub={`${totals.minutes} MIN`} />
-        <StatTile label="G + A" value={`${totals.goals} + ${totals.assists}`} />
+        {/* spans the 2-col mobile grid so the odd fifth tile leaves no gap */}
+        <StatTile
+          label="G + A"
+          value={`${totals.goals} + ${totals.assists}`}
+          className="col-span-2 sm:col-span-1"
+        />
       </div>
 
       <Card>
@@ -166,7 +181,13 @@ export function PlayerDetailClient() {
       </Card>
 
       <Card>
-        <CardHead label="UPCOMING — PER-FIXTURE xP BREAKDOWN" right={<SparkbarLegend />} />
+        {/* <sm: title row then legend row (the one-line head wraps at 390px) */}
+        <header className="flex flex-col items-start gap-1.5 border-b border-hairline-soft px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <span className="microlabel">UPCOMING — PER-FIXTURE xP BREAKDOWN</span>
+          <span className="microlabel text-ink-dim">
+            <SparkbarLegend />
+          </span>
+        </header>
         {player.upcoming.length ? (
           <div className="divide-y divide-hairline-soft">
             {player.upcoming.map((fx) => (

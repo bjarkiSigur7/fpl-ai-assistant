@@ -30,6 +30,10 @@ export function Ticker() {
   const deadlineLabel = state?.next_deadline_utc
     ? `GW${state.next_gw ?? "?"} DEADLINE`
     : "GW1 26/27 (PROV.)";
+  /** <sm: shorter label so the single-line ticker never wraps or truncates. */
+  const deadlineLabelShort = state?.next_deadline_utc
+    ? `GW${state.next_gw ?? "?"} DEADLINE`
+    : "GW1 (PROV.)";
   const countdown =
     now !== null ? countdownString(countdownTo(deadlineIso, now)) : "—— --:--:--";
 
@@ -54,21 +58,27 @@ export function Ticker() {
   const seasonChip = live
     ? `LIVE ${seasonSlash(2026)}${state?.next_gw ? ` · GW${state.next_gw}` : ""}`
     : "PRE-SEASON — 2026/27 LAUNCHES SOON";
+  const seasonChipShort = live ? "LIVE" : "PRE-SEASON";
 
   return (
     <div className="border-b border-hairline bg-surface/80">
-      <div className="mx-auto flex w-full max-w-[1280px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.1em] sm:px-6">
-        <span className="inline-flex items-center gap-2 text-ink-dim">
-          {deadlineLabel}
+      {/* <sm: one line, reduced set (countdown + live badge), never wraps or
+          truncates mid-token; ≥sm: the full set, wrapping between items. */}
+      <div className="noscrollbar mx-auto flex w-full max-w-[1280px] flex-nowrap items-center gap-x-4 gap-y-1 overflow-x-auto whitespace-nowrap px-4 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.1em] sm:flex-wrap sm:overflow-x-visible sm:whitespace-normal sm:px-6">
+        <span className="inline-flex shrink-0 items-center gap-2 text-ink-dim">
+          <span className="hidden sm:inline">{deadlineLabel}</span>
+          <span className="sm:hidden">{deadlineLabelShort}</span>
           <span className="tnum text-ink" suppressHydrationWarning>
             {countdown}
           </span>
         </span>
         <Sep />
-        <StatusBadge kind={dataKind} label={dataLabel} />
+        <span className="hidden shrink-0 sm:inline-flex">
+          <StatusBadge kind={dataKind} label={dataLabel} />
+        </span>
         <Sep />
         <span className="hidden text-ink-dim md:inline">{modelLabel}</span>
-        <span className="ml-auto inline-flex items-center gap-2">
+        <span className="ml-auto inline-flex shrink-0 items-center gap-2">
           {MOCK ? <StatusBadge kind="warn" label="MOCK FEED" /> : null}
           <span
             className={`inline-flex items-center gap-1.5 ${live ? "text-pitch-bright" : "text-ink-dim"}`}
@@ -76,7 +86,8 @@ export function Ticker() {
             <span className={live ? "tickpulse" : ""} aria-hidden="true">
               {live ? "●" : "○"}
             </span>
-            {seasonChip}
+            <span className="hidden sm:inline">{seasonChip}</span>
+            <span className="sm:hidden">{seasonChipShort}</span>
           </span>
         </span>
       </div>

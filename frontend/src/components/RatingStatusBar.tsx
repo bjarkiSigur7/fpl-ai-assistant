@@ -23,7 +23,7 @@ function MiniButton({
     <button
       onClick={onClick}
       disabled={disabled || busy}
-      className={`rounded border border-hairline px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] transition-colors ${
+      className={`hit relative rounded border border-hairline px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] transition-colors ${
         disabled || busy
           ? "cursor-not-allowed text-ink-dim opacity-50"
           : "text-ink-mid hover:border-ink-dim hover:bg-raised hover:text-ink"

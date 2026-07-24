@@ -126,7 +126,7 @@ function SlotChip({
         <button
           onClick={() => onRemove(p.code)}
           aria-label={`Remove ${p.name}`}
-          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-raised font-mono text-[10px] leading-none text-ink-dim transition-colors hover:border-neg hover:text-neg"
+          className="hit absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-raised font-mono text-[10px] leading-none text-ink-dim transition-colors hover:border-neg hover:text-neg"
         >
           ×
         </button>

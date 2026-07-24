@@ -203,7 +203,7 @@ function Pitches({
               role="tab"
               aria-selected={view === v}
               onClick={() => setView(v)}
-              className={`rounded px-3 py-1.5 font-mono text-[10.5px] tracking-[0.12em] ${
+              className={`hit relative rounded px-3 py-1.5 font-mono text-[10.5px] tracking-[0.12em] ${
                 view === v ? "bg-raised text-ink" : "text-ink-dim"
               }`}
             >

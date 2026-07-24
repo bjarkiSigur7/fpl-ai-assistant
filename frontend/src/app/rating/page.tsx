@@ -23,6 +23,7 @@ import {
   type RatingHighlight,
   type RatingSlotPlayer,
 } from "@/components/RatingPitch";
+import { RatingMobileBar } from "@/components/RatingMobileBar";
 import { RatingPlayerPanel } from "@/components/RatingPlayerPanel";
 import { RatingResult } from "@/components/RatingResult";
 import { RatingStatusBar } from "@/components/RatingStatusBar";
@@ -229,7 +230,7 @@ export default function RatingPage() {
         </div>
       ) : (
         <div className="grid items-start gap-5 lg:grid-cols-2">
-          <div className="order-2 lg:order-1">
+          <div className="order-2 min-w-0 lg:order-1">
             <RatingPlayerPanel
               index={index}
               gw={gw}
@@ -238,7 +239,7 @@ export default function RatingPage() {
               onToggle={toggle}
             />
           </div>
-          <div className="order-1 space-y-5 lg:order-2">
+          <div className="order-1 min-w-0 space-y-5 lg:order-2">
             <RatingStatusBar
               nSelected={codes.length}
               budgetLeft={budgetLeft}
@@ -303,6 +304,20 @@ export default function RatingPage() {
           </div>
         </div>
       )}
+      {index && !isLoading ? (
+        <>
+          {/* clearance for the fixed mobile action bar */}
+          <div aria-hidden="true" className="h-16 lg:hidden" />
+          <RatingMobileBar
+            nSelected={codes.length}
+            budgetLeft={budgetLeft}
+            legal={legal}
+            evaluating={evaluating}
+            hasResult={result !== null}
+            onEvaluate={() => void evaluate()}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
