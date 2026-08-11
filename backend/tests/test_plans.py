@@ -781,3 +781,70 @@ class TestRealMilpIntegration:
         assert isinstance(rec.chip_advice, list)
         assert isinstance(rec.stability, list)
         json.dumps(rec.model_dump(mode="json"))
+
+
+# --------------------------------------------------------------------------------------
+# Execution-timing bullets (campaign-handover guidance)
+# --------------------------------------------------------------------------------------
+
+
+class TestExecutionBullets:
+    DEADLINE = datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
+
+    def _pair(self, **kw: object) -> plans.TransferPair:
+        base = dict(
+            player_in=1, player_in_name="Target", player_out=2, player_out_name="Sold"
+        )
+        base.update(kw)
+        return plans.TransferPair(**base)
+
+    def test_no_deadline_no_bullets(self) -> None:
+        assert plans._execution_bullets("transfer", [self._pair()], {1: 90.0}, None) == []
+
+    def test_hold_bullet_names_deadline(self) -> None:
+        bullets = plans._execution_bullets("hold", [], None, self.DEADLINE)
+        assert len(bullets) == 1
+        assert "no transfers this GW" in bullets[0]
+        assert "Fri 21 Aug 17:30 UTC" in bullets[0]
+
+    def test_transfer_bullet_defaults_to_post_pressers(self) -> None:
+        bullets = plans._execution_bullets("transfer", [self._pair()], None, self.DEADLINE)
+        assert len(bullets) == 1
+        assert "AFTER the final press conferences" in bullets[0]
+        assert "05:30/11:30/17:30" in bullets[0]
+
+    def test_price_rise_flags_early_buy(self) -> None:
+        bullets = plans._execution_bullets(
+            "transfer", [self._pair()], {1: 82.0}, self.DEADLINE
+        )
+        assert len(bullets) == 2
+        assert "Target is 82% toward a rise" in bullets[1]
+
+    def test_price_fall_flags_early_sell_and_late_buy(self) -> None:
+        bullets = plans._execution_bullets(
+            "transfer", [self._pair()], {1: -80.0, 2: -76.0}, self.DEADLINE
+        )
+        joined = "\n".join(bullets)
+        assert "Target is 80% toward a FALL" in joined
+        assert "Sold is 76% toward a FALL" in joined
+
+    def test_below_threshold_stays_quiet(self) -> None:
+        bullets = plans._execution_bullets(
+            "transfer", [self._pair()], {1: 40.0, 2: -60.0}, self.DEADLINE
+        )
+        assert len(bullets) == 1  # just the general execution bullet
+
+    def test_build_recommendation_carries_execution_rationale(self) -> None:
+        pytest.importorskip("fplai.optimizer.milp")
+        xp, prices = _small_instance()
+        rec = build_recommendation(
+            None,
+            xp,
+            prices,
+            as_of=AS_OF,
+            horizon=2,
+            run_chips=False,
+            run_stability=False,
+            next_deadline_utc=self.DEADLINE,
+        )
+        assert any(b.startswith("EXECUTION:") for b in rec.rationale)

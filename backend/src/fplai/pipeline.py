@@ -1637,6 +1637,30 @@ def run_optimize(
 
     chip_sim = _load_chip_sim_report(processed, target_season, start_gw)
     as_of = dt.datetime.now(dt.UTC)
+
+    # Execution-timing inputs (advisory rationale only, never solve inputs):
+    # official price-predictor progress per player + the real deadline timestamp.
+    price_trends: dict[int, float] = {}
+    trend_path = processed / "live_roster.parquet"
+    if trend_path.exists():
+        trend_roster = pd.read_parquet(trend_path)
+        if "price_change_percent" in trend_roster.columns:
+            rows_t = trend_roster[trend_roster["season"] == target_season]
+            price_trends = {
+                int(c): float(v)
+                for c, v in zip(rows_t["player_code"], rows_t["price_change_percent"])
+                if pd.notna(v) and float(v) != 0.0
+            }
+    from fplai.publish import _season_state
+
+    snap_state = _season_state(config.RAW_DIR)
+    next_deadline_utc = (
+        snap_state.next_deadline_utc
+        if snap_state is not None
+        and snap_state.season == target_season
+        and snap_state.next_gw == start_gw
+        else None
+    )
     # Tail guard (research follow-up, community-solver practice ≈2): transfers
     # scheduled in the horizon's final GWs monetize almost none of their value
     # inside the window — ban them there (WC/FH chip weeks stay exempt). Only
@@ -1657,6 +1681,8 @@ def run_optimize(
             run_stability=run_stability,
             chip_sim=chip_sim,
             params=solve_params,
+            price_trends=price_trends or None,
+            next_deadline_utc=next_deadline_utc,
         )
 
     # ---- degenerate-solve gate ---------------------------------------------------

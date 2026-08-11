@@ -106,6 +106,14 @@ CHIP_NAMES: dict[str, str] = {
 #: q0 (P(0 minutes)) at or above which a player is flagged as an availability risk.
 AVAILABILITY_Q0_FLAG: float = 0.35
 
+#: |price_change_percent| at/above which an execution bullet flags an imminent
+#: price move. The field is the OFFICIAL predictor's progress-toward-change
+#: number shipped in bootstrap elements (2026-27+); observed "0" for everyone
+#: while prices are frozen pre-GW1. Sign semantics are assumed positive=rise /
+#: negative=fall and treated defensively — a bullet is advisory, never a solve
+#: input.
+PRICE_TREND_FLAG_PCT: float = 75.0
+
 _CHIP_ID_RE = re.compile(r"^([a-z]+?)(\d+)$")
 
 
@@ -821,6 +829,67 @@ def _sim_chip_bullet(advice: ChipAdvice) -> str:
     return text + "."
 
 
+def _execution_bullets(
+    action: str,
+    pairs: Sequence[TransferPair],
+    price_trends: Mapping[int, float] | None,
+    next_deadline_utc: datetime | None,
+) -> list[str]:
+    """WHEN to execute this GW's moves — the campaign-handover guidance.
+
+    Doctrine: information dominates price — transfers wait for the final press
+    conferences (typically the day before the deadline) unless the official
+    price predictor says a target is about to move tonight, in which case the
+    early-lock trade-off is flagged explicitly. The bullets also anchor the
+    re-check cadence (daily rebuilds + the pre-deadline run), so a manager
+    following the site blindly acts on the freshest verdict, not a stale one.
+    Emits nothing without a known deadline (pre-launch/backtest windows).
+    """
+    if next_deadline_utc is None:
+        return []
+    when = next_deadline_utc.strftime("%a %d %b %H:%M UTC")
+    bullets: list[str] = []
+    if action == "hold":
+        bullets.append(
+            f"EXECUTION: no transfers this GW — nothing to do before the deadline ({when}); "
+            "re-check the final pre-deadline verdict (~3h out) in case late news flips it."
+        )
+    else:
+        what = "confirm the squad" if action == "initial-squad" else "make these moves"
+        bullets.append(
+            f"EXECUTION: {what} AFTER the final press conferences — ideally the evening "
+            f"before or on deadline day ({when}). Re-check the latest verdict first: the "
+            "model rebuilds ~05:30/11:30/17:30 UTC daily and again ~3h before the deadline."
+        )
+    if price_trends:
+        flagged = 0
+        for pair in pairs:
+            if flagged >= 3:
+                break
+            t_in = price_trends.get(pair.player_in) if pair.player_in is not None else None
+            t_out = price_trends.get(pair.player_out) if pair.player_out is not None else None
+            if t_in is not None and t_in >= PRICE_TREND_FLAG_PCT:
+                bullets.append(
+                    f"PRICE: {pair.player_in_name} is {t_in:.0f}% toward a rise (official "
+                    "predictor) — buying earlier locks the price, at the cost of acting "
+                    "before the final team news."
+                )
+                flagged += 1
+            elif t_in is not None and t_in <= -PRICE_TREND_FLAG_PCT:
+                bullets.append(
+                    f"PRICE: {pair.player_in_name} is {abs(t_in):.0f}% toward a FALL — "
+                    "waiting past tonight's change buys £0.1m cheaper."
+                )
+                flagged += 1
+            if t_out is not None and t_out <= -PRICE_TREND_FLAG_PCT and flagged < 3:
+                bullets.append(
+                    f"PRICE: {pair.player_out_name} is {abs(t_out):.0f}% toward a FALL — "
+                    "selling before tonight's change protects the sale price."
+                )
+                flagged += 1
+    return bullets
+
+
 def _build_rationale(
     *,
     action: str,
@@ -961,6 +1030,8 @@ def build_recommendation(
     run_chips: bool = True,
     run_stability: bool = True,
     chip_sim: Any | None = None,
+    price_trends: Mapping[int, float] | None = None,
+    next_deadline_utc: datetime | None = None,
 ) -> Recommendation:
     """Build the weekly verdict for a user squad state (or the initial-squad product).
 
@@ -1101,6 +1172,9 @@ def build_recommendation(
         names=names,
         window=window,
         squad_cost=squad_cost,
+    )
+    rationale.extend(
+        _execution_bullets(action, pairs, price_trends, next_deadline_utc)
     )
 
     return Recommendation(

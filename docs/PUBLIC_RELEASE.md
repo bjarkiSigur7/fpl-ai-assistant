@@ -21,14 +21,17 @@ explains the design and what to do when something breaks.
 
 Two schedules:
 
-1. **Daily full run.** Executes the same chain as `make refresh` — snapshot →
-   pulls → build → predict (through the chip-window end, currently GW19) →
-   optimize → simulate — then `fplai publish-static --out site-data`, then the
-   static site build and Pages deploy. Budget ~40-60 minutes per run: the full
-   optimize verdict (chip re-solves + stability re-solves) took ~35 min on the
-   554-player live pool (STATUS.md), simulate adds ~2 min. `refresh` is exit-0
-   data-safe by design: a failed pull degrades gracefully rather than
-   publishing a broken bundle.
+1. **Thrice-daily full runs** (05:30 / 11:30 / 17:30 UTC, since 2026-08-11).
+   Each executes the same chain as `make refresh` — snapshot → pulls → build →
+   ingest (played live GWs) → predict (through the chip-window end, currently
+   GW19) → optimize → simulate — then `fplai publish-static --out site-data`,
+   then the static site build and Pages deploy. The morning run lands after
+   the nightly price changes (~00:00-02:00 UK); the midday and evening runs
+   pick up same-day press-conference injury news (UK pressers cluster
+   10:00-15:00). Budget ~15-25 minutes per run with the CI knobs
+   (`--no-chips --stability-n 15`; the sim supplies chip verdicts). `refresh`
+   is exit-0 data-safe by design: a failed pull degrades gracefully rather
+   than publishing a broken bundle.
 2. **Hourly deadline watch.** A cheap job (one FPL API request: read
    `next_deadline_utc` from bootstrap) that triggers an *extra* full run when
    the next GW deadline is ~3 hours away, so the published verdict reflects
@@ -40,6 +43,31 @@ Retraining (`fplai train`, ~70 s) is **not** part of refresh and not scheduled;
 the maintainer retrains deliberately after enough 2026-27 GWs exist and commits
 to a fresh cache (see §3). Models trained on seasons ≤2025 predicting 2026 is
 the correct deploy split at launch.
+
+## 2b. Campaign handover (following the model with a real team)
+
+To run an actual FPL entry off the published verdicts:
+
+1. Create the team at fantasy.premierleague.com (pre-GW1: mirror the site's
+   initial-squad verdict — re-check it on deadline day, it re-solves with
+   every run).
+2. Set the repo **variable** `FPLAI_ENTRY_ID` to the entry (team) id (the
+   number in the team page URL). From then on — starting the moment GW1
+   finishes, when picks become public — every run rebuilds the squad state
+   from the entry itself (picks + pending transfers + sell prices + FT bank +
+   chips played, `optimizer/state.from_entry`) and the published
+   recommendation is THAT team's verdict. Pre-GW1 or unset, it falls back
+   loudly to the shared fresh-£100m verdict.
+3. Follow the **execution rationale** on the dashboard: the verdict now says
+   WHEN to act (default: after the final press conferences, the evening
+   before or on deadline day), and flags early-buy/early-sell exceptions when
+   the official price predictor shows an imminent price move for a player in
+   the transfer list.
+4. Mid-week transfers you make are picked up automatically (the transfer log
+   is public immediately), so the next run re-plans from reality even if you
+   deviated.
+5. Trust ordering: the **latest** verdict wins — the ~3h pre-deadline run is
+   the one to execute from if you wait until deadline day.
 
 ## 3. Cache self-heal
 

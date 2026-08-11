@@ -23,7 +23,13 @@ name: model-run
 on:
   workflow_dispatch:
   schedule:
+    # Three dailies: post-price-change morning (prices move ~00:00-02:00 UK),
+    # midday and early evening — the latter two catch same-day press-conference
+    # injury news (UK pressers cluster 10:00-15:00) instead of next morning.
+    # deadline-watch.yml adds the final pre-deadline run ~3h out.
     - cron: "30 5 * * *"
+    - cron: "30 11 * * *"
+    - cron: "30 17 * * *"
 
 permissions:
   contents: write # push the day's snapshot to the data-archive branch
@@ -41,6 +47,12 @@ env:
   #                            from-scratch bootstrap
   SEASON: ${{ vars.FPLAI_SEASON || '2026' }}
   CACHE_VERSION: ${{ vars.FPLAI_DATA_CACHE_VERSION || 'v1' }}
+  # The maintainer's FPL entry (team) id — repo variable FPLAI_ENTRY_ID. Once
+  # GW1 has finished, optimize builds the squad state from this entry (picks +
+  # pending transfers + sell prices + FT bank + chips) so the published verdict
+  # is THE campaign's verdict, not a fresh-£100m benchmark. Unset/0 (or
+  # pre-GW1, when picks aren't public) falls back loudly to the shared verdict.
+  FPLAI_ENTRY_ID: ${{ vars.FPLAI_ENTRY_ID || '0' }}
 
 jobs:
   model:

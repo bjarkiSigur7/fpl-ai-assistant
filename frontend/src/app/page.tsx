@@ -224,7 +224,11 @@ function Pitches({
     />
   );
 
-  const mineLabel = entryScoped ? "MY TEAM — OPTIMAL XI" : "INITIAL SQUAD — HORIZON BUILD";
+  const mineLabel = entryScoped
+    ? "MY TEAM — OPTIMAL XI"
+    : rec.action === "initial-squad"
+      ? "INITIAL SQUAD — HORIZON BUILD"
+      : "CAMPAIGN SQUAD — OPTIMAL XI"; // entry-scoped shared verdict (static build)
   const minePitch =
     rec.lineup.length > 0 ? (
       <Pitch
