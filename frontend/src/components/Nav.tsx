@@ -9,6 +9,7 @@ import { ScrollFade } from "./ScrollFade";
 const LINKS = [
   { href: "/", label: "DASHBOARD" },
   { href: "/players", label: "PLAYERS" },
+  { href: "/fixtures", label: "FIXTURES" },
   { href: "/planner", label: "PLANNER" },
   { href: "/rating", label: "AI RATING" },
   { href: "/settings", label: "SETTINGS" },

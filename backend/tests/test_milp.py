@@ -280,6 +280,27 @@ def test_two_transfer_week_with_one_ft_costs_exactly_four() -> None:
     assert free.objective - no_hit.objective == pytest.approx(5.0 - 4.0, abs=1e-6)
 
 
+def test_no_transfer_last_gws_tail_guard() -> None:
+    """The tail guard bans transfers in the horizon's final N GWs (edge-churn fix)."""
+    pool = STD_SQUAD + [(501, "MID", 50, 16)]
+    prices = make_prices(pool)
+    flat = {c: 2.0 for c, _p, _pr, _cl in STD_SQUAD}
+    # A juicy upgrade appears only in the LAST horizon GW (11): without the guard
+    # the solver buys 501 there; with no_transfer_last_gws=1 it must not.
+    xp = make_xp({10: dict(flat), 11: {**flat, 501: 12.0, 304: 0.0}})
+    state = make_state(STD_SQUAD, fts=2)
+    base = {"ft_value": 0.0, "itb_value": 0.0, "use_q0_vice_weight": False}
+
+    free = solve_plan(xp, prices, state, horizon=2, params=tiny_params(**base))
+    assert 501 in free.gws[1].transfers_in
+
+    guarded = solve_plan(
+        xp, prices, state, horizon=2, params=tiny_params(**base, no_transfer_last_gws=1)
+    )
+    assert guarded.gws[1].transfers_in == []
+    assert_plan_legal(guarded, prices)
+
+
 def test_ft_banking_holds_transfer_for_future_value() -> None:
     """With one FT and all value next week, banking beats moving now (decay + FT value)."""
     pool = STD_SQUAD + [(501, "MID", 50, 16), (502, "MID", 50, 17)]

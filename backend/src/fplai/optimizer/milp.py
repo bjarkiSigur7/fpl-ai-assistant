@@ -147,6 +147,14 @@ class SolveParams(BaseModel):
     )
     max_total_hits: int | None = Field(default=None, ge=0)
     no_transfer_gws: set[int] = Field(default_factory=set)
+    no_transfer_last_gws: int = Field(
+        default=0,
+        ge=0,
+        description="Ban transfers in the horizon's final N GWs (solver-practice tail "
+        "guard: moves scheduled at the horizon edge monetize almost none of their "
+        "value inside the window; community solvers run ≈2). Chip weeks (WC/FH) "
+        "in the tail stay exempt, matching the per-GW transfer semantics.",
+    )
     transfer_cap: int = Field(default=TRANSFER_CAP, ge=1)
 
 
@@ -802,6 +810,19 @@ class _PlanModel:
         for w in self.params.no_transfer_gws:
             if w in self.weeks and not (self.initial_mode and w == self.start):
                 m.add(self.count[w] <= 0, f"no_transfer_gw[{w}]")
+        # Tail guard: no NON-CHIP transfers in the horizon's last N GWs — a WC/FH
+        # scheduled there may still restructure (its value is priced separately).
+        tail = self.params.no_transfer_last_gws
+        for w in sorted(self.weeks)[-tail:] if tail else []:
+            if self.initial_mode and w == self.start:
+                continue
+            m.add(
+                self.count[w]
+                - SQUAD_SIZE * self.use_wc[w]
+                - SQUAD_SIZE * self.use_fh[w]
+                <= 0,
+                f"no_transfer_tail[{w}]",
+            )
 
     def _add_ft_machine(self) -> None:
         """FT state machine (§3.2): one-hot states, big-M(=20) clamps to [1, cap].

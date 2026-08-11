@@ -71,6 +71,8 @@ _OPTIONAL = (
     "chip_curves.parquet",
     "chip_sim_report.json",
     "teams.parquet",
+    "team_fixtures.parquet",
+    "captaincy.parquet",
 )
 
 #: chip_curves.parquet v2 season-sim columns (backfilled from chip_sim_report.json
@@ -87,6 +89,9 @@ _BUNDLE_FILES = (
     "dream_team.json",
     "chip_curves.json",
     "rating.json",
+    "fixtures.json",
+    "set_pieces.json",
+    "captaincy.json",
 )
 
 
@@ -218,12 +223,18 @@ def _unwrap(data: Any, key: str) -> Any:
 
 
 def _players_records(
-    roster: pd.DataFrame, shorts: Mapping[int, str], q0_gw1: Mapping[int, float]
+    roster: pd.DataFrame,
+    shorts: Mapping[int, str],
+    q0_gw1: Mapping[int, float],
+    returns: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    returns = returns or {}
     out = []
     for row in roster.sort_values("player_code", kind="stable").itertuples(index=False):
         code = int(row.player_code)
         q0 = q0_gw1.get(code)
+        ret = returns.get(code) or {}
+        news = getattr(row, "news", None)
         out.append(
             {
                 "player_code": code,
@@ -234,9 +245,91 @@ def _players_records(
                 "price": int(row.price),
                 "status": _cell(getattr(row, "status", None)),
                 "q0_gw1": None if q0 is None else _round3(q0),
+                "ownership": _cell(getattr(row, "selected_by_percent", None)),
+                "news": (str(news) or None) if isinstance(news, str) else None,
+                "return_gw": _cell(ret.get("return_gw")),
+                "pen_order": _cell(getattr(row, "penalties_order", None)),
             }
         )
     return out
+
+
+def _fixture_records(
+    team_fx: pd.DataFrame | None, season: int, shorts: Mapping[int, str]
+) -> list[dict[str, Any]]:
+    """team_fixtures.parquet -> per-fixture outlook records (window season only)."""
+    if team_fx is None:
+        return []
+    rows = team_fx[team_fx["season"] == season]
+    records = []
+    for r in rows.sort_values(["gw", "fpl_fixture_id"], kind="stable").itertuples(index=False):
+        records.append(
+            {
+                "gw": int(r.gw),
+                "fpl_fixture_id": int(r.fpl_fixture_id),
+                "kickoff_utc": _cell(getattr(r, "kickoff_utc", None)),
+                "home_code": int(r.home_team_code),
+                "home_short": shorts.get(int(r.home_team_code)),
+                "away_code": int(r.away_team_code),
+                "away_short": shorts.get(int(r.away_team_code)),
+                "home_xg": _cell(getattr(r, "home_lambda", None)),
+                "away_xg": _cell(getattr(r, "away_lambda", None)),
+                "p_cs_home": _cell(getattr(r, "p_cs_home", None)),
+                "p_cs_away": _cell(getattr(r, "p_cs_away", None)),
+                "p_home_win": _cell(getattr(r, "p_home_win", None)),
+                "p_draw": _cell(getattr(r, "p_draw", None)),
+                "p_away_win": _cell(getattr(r, "p_away_win", None)),
+                "odds_blended": bool(getattr(r, "odds_blended", False)),
+            }
+        )
+    return records
+
+
+#: Roster set-piece columns -> compact bundle keys.
+_SET_PIECE_FIELDS = (
+    ("penalties_order", "pen"),
+    ("direct_freekicks_order", "fk"),
+    ("corners_and_indirect_freekicks_order", "corner"),
+)
+
+
+def _set_piece_records(roster: pd.DataFrame, shorts: Mapping[int, str]) -> list[dict[str, Any]]:
+    """Players holding any set-piece duty, with per-duty order + editorial note."""
+    if not any(col for col, _ in _SET_PIECE_FIELDS if col in roster.columns):
+        return []
+    records = []
+    for row in roster.sort_values("player_code", kind="stable").itertuples(index=False):
+        duties: dict[str, Any] = {}
+        for col, key in _SET_PIECE_FIELDS:
+            order = getattr(row, col, None)
+            if order is not None and not pd.isna(order):
+                duties[key] = int(order)
+                note = getattr(row, f"{col.rsplit('_order', 1)[0]}_text", None)
+                if isinstance(note, str) and note:
+                    duties[f"{key}_note"] = note
+        if not duties:
+            continue
+        records.append(
+            {
+                "player_code": int(row.player_code),
+                "web_name": str(row.web_name),
+                "team_code": int(row.team_code),
+                "team_short": shorts.get(int(row.team_code)),
+                "position": str(row.position),
+                **duties,
+            }
+        )
+    return records
+
+
+def _captaincy_records(cap: pd.DataFrame | None) -> list[dict[str, Any]]:
+    if cap is None:
+        return []
+    records = [
+        {k: _cell(v) for k, v in rec.items()} for rec in cap.to_dict(orient="records")
+    ]
+    records.sort(key=lambda r: (-(r.get("xp") or 0.0), r["player_code"]))
+    return records
 
 
 def _xp_table(
@@ -395,6 +488,10 @@ def build_bundle(
     sim_report = _load_json_opt(processed / "chip_sim_report.json")
     curves_path = processed / "chip_curves.parquet"
     curves = pd.read_parquet(curves_path) if curves_path.exists() else None
+    team_fx_path = processed / "team_fixtures.parquet"
+    team_fx = pd.read_parquet(team_fx_path) if team_fx_path.exists() else None
+    cap_path = processed / "captaincy.parquet"
+    captaincy = pd.read_parquet(cap_path) if cap_path.exists() else None
 
     # ---- window --------------------------------------------------------------------
     season = int(pred_gw["season"].max())
@@ -426,7 +523,11 @@ def build_bundle(
         }
 
     # ---- provenance (deterministic: newest INPUT mtime, never the wall clock) --------
-    consumed = [processed / n for n in (*_REQUIRED, *_OPTIONAL) if (processed / n).exists()]
+    consumed = [
+        processed / n
+        for n in (*_REQUIRED, *_OPTIONAL, f"availability_{season}.json")
+        if (processed / n).exists()
+    ]
     generated_utc = _iso(
         dt.datetime.fromtimestamp(max(p.stat().st_mtime for p in consumed), tz=dt.UTC)
     )
@@ -445,9 +546,20 @@ def build_bundle(
     (out / "history").mkdir(exist_ok=True)
     sizes: dict[str, int] = {}
 
+    availability = _load_json_opt(processed / f"availability_{season}.json")
+    returns: dict[int, Any] = {}
+    if isinstance(availability, dict) and isinstance(availability.get("returns"), dict):
+        returns = {int(c): r for c, r in availability["returns"].items()}
     sizes["players.json"] = _dump(
-        out / "players.json", _players_records(roster, shorts, q0_gw1)
+        out / "players.json", _players_records(roster, shorts, q0_gw1, returns)
     )
+    sizes["fixtures.json"] = _dump(
+        out / "fixtures.json", _fixture_records(team_fx, season, shorts)
+    )
+    sizes["set_pieces.json"] = _dump(
+        out / "set_pieces.json", _set_piece_records(roster, shorts)
+    )
+    sizes["captaincy.json"] = _dump(out / "captaincy.json", _captaincy_records(captaincy))
     codes = sorted({c for _, c in xp_of})
     sizes["xp.json"] = _dump(out / "xp.json", _xp_table(gws, codes, xp_of))
     gw1_fixtures = pred[(pred["season"] == season) & (pred["gw"] == from_gw)]

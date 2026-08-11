@@ -163,6 +163,18 @@ def download_e0(season: int, *, raw_dir: Path | None = None, force: bool = False
     payload = _fetch(url)
     if not payload.lstrip(b"\xef\xbb\xbf").startswith(b"Div,"):
         raise ValueError(f"unexpected E0.csv payload from {url} (first bytes: {payload[:40]!r})")
+    # Guard against football-data's pre-publication redirect: before a season's E0.csv
+    # exists the URL 301s to another division's file (observed live 2026-08-11:
+    # mmz4281/2627/E0.csv -> EC.csv, the National League) whose header also starts
+    # with "Div," — so require the DATA rows to actually be division E0.
+    body = payload.lstrip(b"\xef\xbb\xbf")
+    data_lines = [ln for ln in body.splitlines()[1:] if ln.strip()]
+    if data_lines and not all(ln.split(b",", 1)[0] == b"E0" for ln in data_lines):
+        divisions = sorted({ln.split(b",", 1)[0].decode("latin-1") for ln in data_lines})
+        raise ValueError(
+            f"payload from {url} is not division E0 (rows carry {divisions}) — the "
+            "season's file is likely not published yet and the request was redirected"
+        )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(payload)
     return dest

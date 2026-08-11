@@ -180,6 +180,64 @@ export interface GwPrediction {
   position: Position;
   price: number;
   web_name: string;
+  /** Overall selected-by % (static bundle only; undefined in local mode). */
+  ownership?: number | null;
+  /** FPL injury/suspension news string, empty -> null. */
+  news?: string | null;
+  /** Model-parsed expected-return GW from dated news (availability v2). */
+  return_gw?: number | null;
+  /** Penalty-taker order (1 = first choice), from the official bootstrap. */
+  pen_order?: number | null;
+}
+
+/** fixtures.json / GET /api/fixtures-outlook rows — team-level model outlook. */
+export interface FixtureOutlook {
+  gw: number;
+  fpl_fixture_id: number;
+  kickoff_utc: string | null;
+  home_code: number;
+  home_short: string | null;
+  away_code: number;
+  away_short: string | null;
+  home_xg: number | null;
+  away_xg: number | null;
+  p_cs_home: number | null;
+  p_cs_away: number | null;
+  p_home_win: number | null;
+  p_draw: number | null;
+  p_away_win: number | null;
+  odds_blended: boolean;
+}
+
+/** set_pieces.json / GET /api/set-pieces rows — duty holders only. */
+export interface SetPieceDuty {
+  player_code: number;
+  web_name: string;
+  team_code: number;
+  team_short: string | null;
+  position: Position;
+  pen?: number;
+  pen_note?: string;
+  fk?: number;
+  fk_note?: string;
+  corner?: number;
+  corner_note?: string;
+}
+
+/** captaincy.json / GET /api/captaincy rows — sampler-driven captain stats. */
+export interface CaptaincyRow {
+  season: number;
+  gw: number;
+  player_code: number;
+  xp: number;
+  mean_pts: number;
+  sd_pts: number;
+  p_haul: number;
+  p_blank: number;
+  p_best: number;
+  /** P(outscores the top-xP pick); null for the top pick itself. */
+  p_beats_top: number | null;
+  n_draws: number;
 }
 
 /** One per-fixture row of predictions.parquet (player detail upcoming view). */

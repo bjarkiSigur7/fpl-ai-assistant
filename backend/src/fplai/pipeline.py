@@ -247,6 +247,50 @@ def run_build(seasons: Sequence[int] | None = None) -> dict[str, Path]:
 
 
 # ---------------------------------------------------------------------------
+# ingest (played live-season GWs -> player_match/player_gw splice)
+# ---------------------------------------------------------------------------
+
+
+def run_ingest(processed_dir: Path | None = None) -> Any | None:
+    """Splice played live-season GW outcomes into player_match/player_gw.
+
+    Sources ``element-summary`` history rows via the FPL API (see
+    ``fplai.data.ingest``).  No-op (and no network) when nothing has been
+    played or every played GW is already frozen on disk.  Must run AFTER
+    ``build`` (which drops live-season rows) and BEFORE ``predict``.
+    """
+    from fplai.data.fpl_api import FplApiClient
+    from fplai.data.ingest import ingest_played
+
+    ctx = _live_context()
+    if ctx is None:
+        console.print("[bold]ingest[/bold]: no live snapshot — nothing to do")
+        return None
+    report = ingest_played(
+        FplApiClient(),
+        ctx,
+        processed_dir=processed_dir,
+        on_progress=lambda done, total: (
+            console.print(f"  element summaries: {done}/{total}") if done % 100 == 0 else None
+        ),
+    )
+    if report is None:
+        console.print("[bold]ingest[/bold]: no unfrozen played GWs — up to date")
+        return None
+    console.print(
+        f"[bold]ingest[/bold]: season {report.season} GWs {report.gws} — "
+        f"{report.n_rows:,} player-fixture rows from {report.n_players} players "
+        f"({report.n_swept} summaries swept); frozen: {report.frozen_gws or 'none yet'}"
+    )
+    if report.unmatched_elements:
+        console.print(
+            f"  [yellow]{len(report.unmatched_elements)} swept elements missing from the "
+            f"roster (ids {report.unmatched_elements[:5]}…)[/yellow]"
+        )
+    return report
+
+
+# ---------------------------------------------------------------------------
 # refresh (snapshot -> incremental pulls -> build -> model stages)
 # ---------------------------------------------------------------------------
 
@@ -344,6 +388,14 @@ def run_refresh() -> None:
     _refresh_pulls(state)
     run_build()
     from fplai import config
+
+    if state.is_live_2026_27:
+        # AFTER build (which rebuilds player_match from raw and drops live-season
+        # rows), BEFORE predict (whose form features need the played GWs).
+        try:
+            run_ingest()
+        except Exception as exc:  # noqa: BLE001 - refresh must stay exit-0
+            console.print(f"[bold]ingest[/bold]: [yellow]failed: {exc}[/yellow] (skipping)")
 
     if (config.MODELS_DIR / "manifest.json").exists():
         console.print("[bold]train[/bold]: using existing artifacts (retrain with `fplai train`)")
@@ -723,8 +775,13 @@ def _predict_frames(
     models: tuple[Any, Any, Any, BonusCalibration],
     use_odds: bool,
     live_adjust: Any | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run minutes/team/rates + assemble over one already-selected feature frame.
+
+    Returns ``(pred, gw_pred, team_pred)`` — the third frame is the TeamModel's
+    per-fixture prediction (goal lambdas, clean-sheet and 1X2 probabilities,
+    odds-blend flag) joined with fixture context; ``run_predict`` persists it as
+    ``team_fixtures.parquet`` for the fixture-outlook surfaces.
 
     ``live_adjust`` (a :class:`fplai.data.live.LiveAdjustments`) switches the
     minutes/rates paths to the live policy: WC2026 fatigue dampening on GWs
@@ -809,7 +866,83 @@ def _predict_frames(
     gw_pred = gw_pred.merge(last_ctx, on=["season", "gw", "player_code"], how="left")
     players = tables["players"][["player_code", "web_name"]].drop_duplicates("player_code")
     gw_pred = gw_pred.merge(players, on="player_code", how="left")
-    return pred, gw_pred
+
+    # Team-level per-fixture outlook: model probabilities + fixture context.
+    ctx_cols = ["season", "gw", "fpl_fixture_id", "kickoff_utc",
+                "home_team_code", "away_team_code"]
+    team_out = fx_target[ctx_cols].merge(
+        team_pred, on=["season", "fpl_fixture_id"], how="left"
+    )
+    if "odds_blended" not in team_out.columns:
+        team_out["odds_blended"] = False
+    return pred, gw_pred, team_out
+
+
+def _captaincy_frame(
+    pred: pd.DataFrame,
+    gw_pred: pd.DataFrame,
+    *,
+    n_draws: int = 2000,
+    seed: int = 0,
+    top_k: int = 8,
+) -> pd.DataFrame | None:
+    """Distributional captaincy comparison for the window's first GW.
+
+    Samples joint realized points (shared fixture scorelines preserved — two
+    candidates in the same match are correlated) for the ``top_k`` next-GW xP
+    candidates and summarizes what a point estimate hides: haul/blank tails,
+    P(best captain of the set) with ties split evenly, and P(outscores the
+    top-xP pick).  Deterministic under ``seed``.  ``None`` when the window has
+    fewer than two viable candidates.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from fplai.models.sampler import PointsSampler
+
+    season = int(gw_pred["season"].max())
+    sg = gw_pred[gw_pred["season"] == season]
+    first_gw = int(sg["gw"].min())
+    pool = sg[(sg["gw"] == first_gw) & (sg["q0"].fillna(1.0) <= 0.5)]
+    cands = pool.nlargest(top_k, "xp")[["player_code", "xp"]]
+    if len(cands) < 2:
+        return None
+    codes = [int(c) for c in cands["player_code"]]
+    rows = pred[
+        (pred["season"] == season)
+        & (pred["gw"] == first_gw)
+        & (pred["player_code"].isin(codes))
+    ]
+    if rows.empty:
+        return None
+    sample = PointsSampler().sample_gw(rows, n_draws, seed)
+    order = {int(c): i for i, c in enumerate(sample.index["player_code"])}
+    pts = sample.points[:, [order[c] for c in codes]].astype(np.int32)  # [n, k]
+
+    best = pts.max(axis=1, keepdims=True)
+    is_best = pts == best
+    p_best = (is_best / is_best.sum(axis=1, keepdims=True)).mean(axis=0)
+    top_pts = pts[:, 0]  # cands sorted by xp desc — column 0 is the top-xP pick
+    beats_top = (pts > top_pts[:, None]).mean(axis=0) + 0.5 * (
+        pts == top_pts[:, None]
+    ).mean(axis=0)
+    beats_top[0] = np.nan
+
+    return pd.DataFrame(
+        {
+            "season": season,
+            "gw": first_gw,
+            "player_code": codes,
+            "xp": cands["xp"].to_numpy(dtype=float),
+            "mean_pts": pts.mean(axis=0),
+            "sd_pts": pts.std(axis=0),
+            "p_haul": (pts >= 10).mean(axis=0),
+            "p_blank": (pts <= 2).mean(axis=0),
+            "p_best": p_best,
+            "p_beats_top": beats_top,
+            "n_draws": n_draws,
+        }
+    )
 
 
 def run_predict(
@@ -979,16 +1112,26 @@ def run_predict(
             f"fatigue dampening for {len(live_adjust.fatigue)} WC2026 players "
             f"(GWs {live_adjust.fatigue_gws[0]}-{live_adjust.fatigue_gws[-1]})"
         )
-    pred, gw_pred = _predict_frames(
+    pred, gw_pred, team_fx = _predict_frames(
         rows, fixtures, tables, (minutes_model, team_model, rates_model, calibration), use_odds,
         live_adjust=live_adjust,
     )
     paths = {
         "predictions": out / "predictions.parquet",
         "predictions_gw": out / "predictions_gw.parquet",
+        "team_fixtures": out / "team_fixtures.parquet",
     }
     pred.to_parquet(paths["predictions"], index=False)
     gw_pred.to_parquet(paths["predictions_gw"], index=False)
+    team_fx.to_parquet(paths["team_fixtures"], index=False)
+    try:
+        cap = _captaincy_frame(pred, gw_pred)
+    except Exception as exc:  # noqa: BLE001 - optional artifact must not fail predict
+        console.print(f"  [yellow]captaincy sample skipped: {exc}[/yellow]")
+        cap = None
+    if cap is not None:
+        paths["captaincy"] = out / "captaincy.parquet"
+        cap.to_parquet(paths["captaincy"], index=False)
 
     first = gw_pred[gw_pred["gw"] == gw_pred["gw"].min()]
     top = first.nlargest(10, "xp")[["web_name", "position", "price", "xp"]]
@@ -1494,6 +1637,14 @@ def run_optimize(
 
     chip_sim = _load_chip_sim_report(processed, target_season, start_gw)
     as_of = dt.datetime.now(dt.UTC)
+    # Tail guard (research follow-up, community-solver practice ≈2): transfers
+    # scheduled in the horizon's final GWs monetize almost none of their value
+    # inside the window — ban them there (WC/FH chip weeks stay exempt). Only
+    # applied when the horizon leaves at least one actionable GW ahead of the tail.
+    from fplai.optimizer.milp import SolveParams
+
+    tail = 2 if plan_horizon >= 4 else 0
+    solve_params = SolveParams(no_transfer_last_gws=tail)
     with _capture_chip_curves() as captured:
         rec = plans.build_recommendation(
             state,
@@ -1505,6 +1656,7 @@ def run_optimize(
             run_chips=run_chips,
             run_stability=run_stability,
             chip_sim=chip_sim,
+            params=solve_params,
         )
 
     # ---- degenerate-solve gate ---------------------------------------------------

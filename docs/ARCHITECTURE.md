@@ -23,6 +23,10 @@ data/
   odds_api.py         the-odds-api.com client (optional; FPLAI_ODDS_API_KEY; degrade gracefully).
   build.py            Raw -> processed: builds the canonical parquet tables below, applying all
                       FPL_KNOWLEDGE Part 2 remaps (2019-20 events, void GWs, stint splits).
+  ingest.py           Played LIVE-season GWs -> player_match/player_gw splice, sourced from
+                      element-summary history rows (DGW-safe, per-GW price). Freeze bookkeeping
+                      via bootstrap data_checked + processed/ingest_state.json; zero requests
+                      between GWs. Runs AFTER build (which drops live rows), BEFORE predict.
   crosswalk.py        Identity resolution: player_code <-> per-season element ids <-> understat
                       ids; canonical team table across FPL/Understat/ClubElo/football-data.
 features/             Feature engineering (multi-horizon windows per OpenFPL) — stage 2.
@@ -45,6 +49,11 @@ raw/football_data/{season}/E0.csv
 raw/clubelo/{ClubName}.csv
 processed/player_match.parquet   processed/player_gw.parquet   processed/fixtures.parquet
 processed/teams.parquet          processed/players.parquet     processed/odds.parquet
+processed/team_fixtures.parquet  # predict-time TeamModel per-fixture outlook (lambdas, CS/1X2,
+                                 # odds_blended) + fixture context — fixtures.json source
+processed/captaincy.parquet      # predict-time sampler captaincy stats (top-8, 2000 draws)
+processed/availability_{season}.json  # availability-v2 dated-return report (per player_code)
+processed/ingest_state.json      # played-GW ingest freeze bookkeeping (frozen_gws per season)
 models/{component}/...           cache/http/...
 ```
 
@@ -238,6 +247,20 @@ model manifest); `GET /predictions?gw&horizon` (per-player xP + components + q's
 /refresh` (runs the refresh pipeline; SSE/polled status at GET /refresh/status); `GET
 /chip-curves?entry_id`. All responses are pydantic models mirroring the optimizer/model
 contracts; frontend consumes these shapes verbatim.
+
+2026-08 additions (bundle-shaped record passthroughs; the publisher's record builders are
+the single source of truth for the shapes in BOTH modes): `GET /fixtures-outlook`
+(team_fixtures.parquet → fixtures.json rows), `GET /set-pieces` (live_roster duty columns →
+set_pieces.json rows), `GET /captaincy` (captaincy.parquet → captaincy.json rows).
+
+## Static bundle contract additions (2026-08; see fplai/publish.py docstring for v1)
+
+players.json rows gain `ownership` (selected_by %), `news` (nullable string),
+`return_gw` (availability-v2 parsed, nullable), `pen_order` (nullable). New files:
+`fixtures.json` (per-fixture model outlook: gw, kickoff, codes+shorts, home/away xG λ,
+CS%/1X2 probabilities, odds_blended), `set_pieces.json` (duty holders: pen/fk/corner
+orders + editorial notes), `captaincy.json` (sampler stats: xp, mean/sd, p_haul, p_blank,
+p_best, p_beats_top, n_draws). All optional artifacts degrade to `[]` + a `missing` flag.
 
 ## Conventions
 

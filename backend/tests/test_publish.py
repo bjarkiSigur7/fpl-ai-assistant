@@ -114,10 +114,66 @@ def _write_processed(processed: Path) -> None:
                 "season": SEASON, "player_code": code, "web_name": name, "position": pos,
                 "team_code": team, "price": price,
                 "status": "i" if code == ONE_GW_PLAYER[0] else "a",
+                "selected_by_percent": 25.512345 if code == 311 else 1.0,
+                "news": "Knee injury - Expected back 23 Aug"
+                if code == ONE_GW_PLAYER[0]
+                else "",
+                "penalties_order": 1 if code == 311 else None,
+                "penalties_text": "Shares duties" if code == 311 else "",
+                "direct_freekicks_order": None,
+                "direct_freekicks_text": "",
+                "corners_and_indirect_freekicks_order": 2 if code == 311 else None,
+                "corners_and_indirect_freekicks_text": "",
             }
             for code, name, pos, team, price, _ in ALL_ROWS
         ]
     ).to_parquet(processed / "live_roster.parquet")
+
+    (processed / f"availability_{SEASON}.json").write_text(
+        json.dumps(
+            {
+                "season": SEASON,
+                "returns": {
+                    str(ONE_GW_PLAYER[0]): {
+                        "return_date": "2026-08-23", "kind": "injury", "return_gw": 2,
+                    }
+                },
+            }
+        )
+    )
+
+    pd.DataFrame(
+        [
+            {
+                "season": SEASON, "gw": gw, "fpl_fixture_id": gw * 100 + h,
+                "kickoff_utc": pd.Timestamp("2026-08-21 19:00:00+00:00"),
+                "home_team_code": h, "away_team_code": (h % 10) + 1,
+                "home_lambda": 1.6123456, "away_lambda": 1.1,
+                "p_cs_home": 0.31234567, "p_cs_away": 0.2,
+                "p_home_win": 0.5, "p_draw": 0.25, "p_away_win": 0.25,
+                "odds_blended": gw == 1,
+            }
+            for gw in GWS
+            for h in (1, 3)
+        ]
+    ).to_parquet(processed / "team_fixtures.parquet")
+
+    pd.DataFrame(
+        [
+            {
+                "season": SEASON, "gw": 1, "player_code": 311, "xp": 8.0004567,
+                "mean_pts": 7.912345, "sd_pts": 4.1, "p_haul": 0.3312345,
+                "p_blank": 0.15, "p_best": 0.41, "p_beats_top": np.nan,
+                "n_draws": 2000,
+            },
+            {
+                "season": SEASON, "gw": 1, "player_code": 411, "xp": 7.5,
+                "mean_pts": 7.4, "sd_pts": 4.0, "p_haul": 0.30,
+                "p_blank": 0.17, "p_best": 0.35, "p_beats_top": 0.44123456,
+                "n_draws": 2000,
+            },
+        ]
+    ).to_parquet(processed / "captaincy.parquet")
 
     pd.DataFrame(
         [
@@ -235,14 +291,19 @@ def test_round_trip_contract(env: SimpleNamespace) -> None:
     first = next(p for p in players if p["player_code"] == 101)
     assert set(first) == {
         "player_code", "web_name", "position", "team_short", "team_code",
-        "price", "status", "q0_gw1",
+        "price", "status", "q0_gw1", "ownership", "news", "return_gw", "pen_order",
     }
     assert first == {
         "player_code": 101, "web_name": "GkFloorA", "position": "GKP",
         "team_short": "T1", "team_code": 1, "price": 40, "status": "a", "q0_gw1": 0.05,
+        "ownership": 1.0, "news": None, "return_gw": None, "pen_order": None,
     }
     one_gw = next(p for p in players if p["player_code"] == 555)
     assert one_gw["status"] == "i" and one_gw["q0_gw1"] == 0.05
+    assert one_gw["news"] == "Knee injury - Expected back 23 Aug"
+    assert one_gw["return_gw"] == 2  # from availability_{season}.json
+    star = next(p for p in players if p["player_code"] == 311)
+    assert star["ownership"] == 25.512 and star["pen_order"] == 1
 
     xp = _load(env.out, "xp.json")
     assert xp["gws"] == [1, 2]
@@ -291,6 +352,32 @@ def test_round_trip_contract(env: SimpleNamespace) -> None:
     assert rating["captain_bonus"] is True
     assert rating["window_gws"] == [1, 2]
     assert 0 < rating["floor_metric"] < rating["optimal_metric"]
+
+    fixtures = _load(env.out, "fixtures.json")
+    assert len(fixtures) == 4  # 2 GWs x 2 fixtures
+    fx = fixtures[0]
+    assert set(fx) == {
+        "gw", "fpl_fixture_id", "kickoff_utc", "home_code", "home_short",
+        "away_code", "away_short", "home_xg", "away_xg", "p_cs_home", "p_cs_away",
+        "p_home_win", "p_draw", "p_away_win", "odds_blended",
+    }
+    assert fx["gw"] == 1 and fx["home_short"] == "T1" and fx["away_short"] == "T2"
+    assert fx["home_xg"] == 1.612 and fx["p_cs_home"] == 0.312
+    assert fx["odds_blended"] is True and fixtures[-1]["odds_blended"] is False
+    assert fx["kickoff_utc"] == "2026-08-21T19:00:00Z"
+
+    set_pieces = _load(env.out, "set_pieces.json")
+    assert len(set_pieces) == 1
+    sp = set_pieces[0]
+    assert sp["player_code"] == 311 and sp["pen"] == 1 and sp["corner"] == 2
+    assert sp["pen_note"] == "Shares duties"
+    assert "fk" not in sp
+
+    captaincy = _load(env.out, "captaincy.json")
+    assert [c["player_code"] for c in captaincy] == [311, 411]  # xp desc
+    top = captaincy[0]
+    assert top["p_haul"] == 0.331 and top["p_beats_top"] is None
+    assert captaincy[1]["p_beats_top"] == 0.441
 
 
 def test_rating_anchors_reuse_exact_engine(env: SimpleNamespace) -> None:

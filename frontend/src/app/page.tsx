@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { OFFLINE_HINT, useRecommendation } from "@/lib/api";
+import { OFFLINE_HINT, useCaptaincy, useRecommendation } from "@/lib/api";
 import { xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
 import type { Recommendation } from "@/lib/types";
@@ -101,6 +101,68 @@ function MoversCard({ index }: { index: PlayerIndex }) {
             metricTitle="horizon xP per £1.0m"
           />
         ))}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Distributional captaincy comparison — what the xP point estimate hides.
+ * 2,000 joint Monte Carlo rollouts per candidate (shared fixture scorelines,
+ * so same-match candidates are correlated); P(BEST) splits ties evenly.
+ */
+function CaptaincyCard({ index }: { index: PlayerIndex }) {
+  const { data } = useCaptaincy();
+  if (!data || data.length === 0) return null;
+  const rows = data.slice(0, 5);
+  const maxBest = Math.max(...rows.map((r) => r.p_best), 0.01);
+  return (
+    <Card>
+      <CardHead label="CAPTAINCY — MC DISTRIBUTIONS" right={`GW${rows[0].gw}`} />
+      <div className="px-3 pb-3 pt-1">
+        <div className="microlabel grid grid-cols-[1fr_3rem_3rem_3rem] gap-2 px-1 pb-1 text-right">
+          <span className="text-left">{rows[0].n_draws.toLocaleString()} ROLLOUTS</span>
+          <span title="P(scores 10+ points)">HAUL</span>
+          <span title="P(scores 2 or fewer)">BLANK</span>
+          <span title="P(best captain of the candidate set; ties split)">BEST</span>
+        </div>
+        {rows.map((r) => {
+          const p = index.get(r.player_code);
+          return (
+            <div
+              key={r.player_code}
+              className="grid grid-cols-[1fr_3rem_3rem_3rem] items-center gap-2 rounded px-1 py-1 hover:bg-raised"
+              title={
+                r.p_beats_top !== null
+                  ? `P(outscores the top pick): ${(r.p_beats_top * 100).toFixed(0)}%`
+                  : "The model's top captaincy pick by xP"
+              }
+            >
+              <span className="relative min-w-0">
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 rounded-sm bg-raised"
+                  style={{ width: `${(r.p_best / maxBest) * 100}%` }}
+                />
+                <span className="relative flex items-baseline gap-1.5 truncate pl-1 text-[12.5px] font-medium text-ink">
+                  {p?.web_name ?? `#${r.player_code}`}
+                  <span className="font-mono text-[10px] tnum text-ink-dim">
+                    {xp1(r.xp)}xP
+                  </span>
+                </span>
+              </span>
+              <span className="text-right font-mono text-[11px] tnum text-ink-mid">
+                {(r.p_haul * 100).toFixed(0)}%
+              </span>
+              <span className="text-right font-mono text-[11px] tnum text-ink-dim">
+                {(r.p_blank * 100).toFixed(0)}%
+              </span>
+              <span className="text-right font-mono text-[11.5px] font-semibold tnum text-ink">
+                {(r.p_best * 100).toFixed(0)}%
+              </span>
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -266,6 +328,7 @@ export default function DashboardPage() {
       <div className="grid gap-5 lg:grid-cols-3">
         <Pitches rec={rec} index={index} entryScoped={entryScoped} />
         <div className="space-y-5">
+          <CaptaincyCard index={index} />
           <MoversCard index={index} />
           <TrendCard index={index} />
         </div>

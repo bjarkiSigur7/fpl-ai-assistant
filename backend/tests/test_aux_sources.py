@@ -83,6 +83,18 @@ class TestFootballData:
         with pytest.raises(ValueError, match="unexpected E0.csv payload"):
             football_data.download_e0(2024, raw_dir=tmp_path)
 
+    def test_download_e0_rejects_redirected_wrong_division(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pre-publication, football-data 301s E0.csv to another division's file
+        # (observed live 2026-08-11: 2627/E0.csv -> EC.csv). Same "Div," header,
+        # wrong rows — must raise, never be written to disk as E0.
+        ec = b"Div,Date,HomeTeam,AwayTeam,FTHG,FTAG\nEC,08/08/2026,Foo,Bar,1,0\n"
+        monkeypatch.setattr(football_data, "_fetch", lambda url, **_: ec)
+        with pytest.raises(ValueError, match="not division E0"):
+            football_data.download_e0(2026, raw_dir=tmp_path)
+        assert not (tmp_path / "2026" / "E0.csv").exists()
+
     def test_parse_odds_modern_closing_pinnacle(self, tmp_path: Path) -> None:
         _stage_e0(tmp_path, 2024, E0_2425)
         df = football_data.parse_odds(2024, raw_dir=tmp_path)

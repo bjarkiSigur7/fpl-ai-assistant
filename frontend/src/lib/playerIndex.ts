@@ -26,6 +26,14 @@ export interface IndexedPlayer {
   firstRow: GwPrediction;
   /** Total xP over the whole horizon. */
   xpHorizon: number;
+  /** Overall selected-by % (null when the data source doesn't carry it). */
+  ownership: number | null;
+  /** FPL news string (injury/suspension), null when none. */
+  news: string | null;
+  /** Model-parsed expected-return GW from dated news, null when undated. */
+  returnGw: number | null;
+  /** Penalty order (1 = first choice), null when not a taker. */
+  penOrder: number | null;
 }
 
 export interface PlayerIndex {
@@ -58,6 +66,10 @@ export function buildIndex(data: PredictionsResponse): PlayerIndex {
         q0ByGw: new Map(),
         firstRow: row,
         xpHorizon: 0,
+        ownership: row.ownership ?? null,
+        news: row.news ?? null,
+        returnGw: row.return_gw ?? null,
+        penOrder: row.pen_order ?? null,
       };
       byCode.set(row.player_code, entry);
     }

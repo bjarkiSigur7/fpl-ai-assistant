@@ -60,6 +60,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -189,6 +190,19 @@ _OUT_NO_CHANCE_FACTOR = 0.05
 _DOUBT_NO_CHANCE_FACTOR = 0.5
 #: GWs over which an availability flag linearly recovers to full fitness.
 _AVAILABILITY_RECOVERY_GWS = 4
+
+#: Minutes factor in a dated injury's RETURN GW (sharpness/bench risk on comeback).
+_RETURN_GW_FACTOR = 0.65
+#: The FPL news grammar's dated fragments (verified live 2026-08-11):
+#: "<Type> injury - Expected back 23 Aug" / "Suspended until 6 Sep".
+_NEWS_RETURN_RE = re.compile(
+    r"(?P<kind>Expected back|Suspended until)\s+(?P<day>\d{1,2})\s+(?P<mon>[A-Za-z]{3})",
+    re.IGNORECASE,
+)
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
 
 _MINUTES_KEYS = ("season", "gw", "player_code", "fpl_fixture_id")
 _Q_COLUMNS = ("q0", "q1", "q2", "mu1", "mu2")
@@ -336,6 +350,40 @@ def parse_roster(bootstrap: dict[str, Any]) -> pd.DataFrame:
             "can_select": [bool(e.get("can_select", True)) for e in rows],
             "opta_code": pd.array(
                 [e.get("opta_code") for e in rows], dtype="string"
+            ),
+            # 2026-08 additions: injury-news timestamp (return-date year inference),
+            # set-piece duty orders (Scout-informed editorial data shipped IN the
+            # bootstrap) and the official price-predictor progress field.
+            "news_added": pd.array(
+                [e.get("news_added") for e in rows], dtype="string"
+            ),
+            "penalties_order": pd.array(
+                [e.get("penalties_order") for e in rows], dtype="Int64"
+            ),
+            "penalties_text": pd.array(
+                [str(e.get("penalties_text", "") or "") for e in rows], dtype="string"
+            ),
+            "direct_freekicks_order": pd.array(
+                [e.get("direct_freekicks_order") for e in rows], dtype="Int64"
+            ),
+            "direct_freekicks_text": pd.array(
+                [str(e.get("direct_freekicks_text", "") or "") for e in rows], dtype="string"
+            ),
+            "corners_and_indirect_freekicks_order": pd.array(
+                [e.get("corners_and_indirect_freekicks_order") for e in rows], dtype="Int64"
+            ),
+            "corners_and_indirect_freekicks_text": pd.array(
+                [str(e.get("corners_and_indirect_freekicks_text", "") or "") for e in rows],
+                dtype="string",
+            ),
+            "price_change_percent": pd.array(
+                [
+                    float(e["price_change_percent"])
+                    if e.get("price_change_percent") not in (None, "")
+                    else None
+                    for e in rows
+                ],
+                dtype="Float64",
             ),
         }
     )
@@ -592,6 +640,131 @@ def availability_frame(ctx: LiveContext, gws: list[int]) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------------------
+# Availability v2 — dated return gates parsed from the news strings
+# --------------------------------------------------------------------------------------
+
+
+def parse_news_return(
+    news: str, news_added: str | None, fallback: dt.date | None = None
+) -> tuple[dt.date, str] | None:
+    """Extract (return date, kind) from an FPL news string; ``None`` when undated.
+
+    The live news grammar is a small closed vocabulary (verified 2026-08-11):
+    ``"<Type> injury - Expected back 23 Aug"`` and ``"Suspended until 6 Sep"``
+    carry dates; ``"… - Unknown return date"`` / ``"… - 75% chance of playing"``
+    / departure notices do not.  ``kind`` is ``"injury"`` or ``"suspension"``.
+
+    The year is inferred from ``news_added``: the parsed day-month is placed in
+    the announcement's year unless that lands more than 45 days BEFORE the
+    announcement, in which case it rolls to the next year (Dec -> Jan wrap).
+    A return date in the recent past (stale news) parses fine and simply gates
+    nothing — the caller compares kickoffs against it.
+    """
+    m = _NEWS_RETURN_RE.search(news or "")
+    if m is None:
+        return None
+    mon = _MONTHS.get(m.group("mon").lower())
+    if mon is None:
+        return None
+    added: dt.date | None = None
+    if news_added:
+        try:
+            added = dt.datetime.fromisoformat(str(news_added).replace("Z", "+00:00")).date()
+        except ValueError:
+            added = None
+    if added is None:
+        added = fallback if fallback is not None else dt.datetime.now(dt.UTC).date()
+    try:
+        candidate = dt.date(added.year, mon, int(m.group("day")))
+    except ValueError:
+        return None
+    if candidate < added - dt.timedelta(days=45):
+        candidate = dt.date(added.year + 1, mon, candidate.day)
+    kind = "suspension" if m.group("kind").lower().startswith("suspended") else "injury"
+    return candidate, kind
+
+
+def availability_overrides(
+    ctx: LiveContext,
+) -> tuple[dict[tuple[int, int], float], dict[int, dict[str, Any]]]:
+    """Per-(player_code, gw) minutes-availability factors from dated news.
+
+    For every roster player whose news carries a parseable return date, the
+    player's OWN team's first kickoff in each GW decides the gate:
+
+    * kickoff before the return date -> out: ``0.0`` for suspensions (a ban is
+      a hard rule, not a fitness state), :data:`_OUT_NO_CHANCE_FACTOR` for
+      injuries;
+    * the first GW at/after the return date -> ``1.0`` for suspensions
+      (suspended players are match-fit), :data:`_RETURN_GW_FACTOR` for injuries
+      (comeback sharpness/bench risk);
+    * later GWs -> ``1.0`` — overriding the generic linear-recovery heuristic
+      in both directions.
+
+    Returns ``(overrides, report)`` where the report maps player_code ->
+    ``{return_date, kind, return_gw}`` for observability/publishing.
+    """
+    fx = ctx.fixtures
+    ko = (
+        pd.concat(
+            [
+                fx[["gw", "home_team_code", "kickoff_utc"]].rename(
+                    columns={"home_team_code": "team_code"}
+                ),
+                fx[["gw", "away_team_code", "kickoff_utc"]].rename(
+                    columns={"away_team_code": "team_code"}
+                ),
+            ],
+            ignore_index=True,
+        )
+        .groupby(["team_code", "gw"])["kickoff_utc"]
+        .min()
+    )
+    # Year-inference anchor when news_added is absent: the snapshot's own date
+    # (directory name), so offline runs are reproducible regardless of wall clock.
+    snap_date: dt.date | None = None
+    try:
+        snap_date = dt.date.fromisoformat(ctx.snap_dir.name)
+    except ValueError:
+        earliest = ctx.fixtures["kickoff_utc"].min()
+        if pd.notna(earliest):
+            snap_date = earliest.date()
+    overrides: dict[tuple[int, int], float] = {}
+    report: dict[int, dict[str, Any]] = {}
+    for row in ctx.roster.itertuples(index=False):
+        news = row.news if isinstance(row.news, str) else ""
+        added = getattr(row, "news_added", None)
+        added = added if isinstance(added, str) else None
+        parsed = parse_news_return(news, added, fallback=snap_date)
+        if parsed is None:
+            continue
+        return_date, kind = parsed
+        team_code = int(row.team_code)
+        if team_code not in ko.index.get_level_values(0):
+            continue
+        code = int(row.player_code)
+        team_ko = ko.loc[team_code]
+        return_gw: int | None = None
+        for gw, kickoff in team_ko.items():
+            gw = int(gw)
+            if pd.isna(kickoff):
+                continue
+            if kickoff.date() < return_date:
+                overrides[(code, gw)] = 0.0 if kind == "suspension" else _OUT_NO_CHANCE_FACTOR
+            elif return_gw is None:
+                return_gw = gw
+                overrides[(code, gw)] = 1.0 if kind == "suspension" else _RETURN_GW_FACTOR
+            else:
+                overrides[(code, gw)] = 1.0
+        report[code] = {
+            "return_date": return_date.isoformat(),
+            "kind": kind,
+            "return_gw": return_gw,
+        }
+    return overrides, report
+
+
+# --------------------------------------------------------------------------------------
 # Cold-start priors
 # --------------------------------------------------------------------------------------
 
@@ -705,6 +878,9 @@ class LiveAdjustments:
     cold_codes: frozenset[int]
     """Roster codes with no player_match history at all (cold-start policy)."""
     rate_priors: RatePriors
+    avail_overrides: dict[tuple[int, int], float] = field(default_factory=dict)
+    """(player_code, gw) -> minutes factor from dated news (availability v2);
+    overrides the generic flag+linear-recovery heuristic where present."""
 
     @property
     def fatigue_gws(self) -> tuple[int, ...]:
@@ -788,6 +964,17 @@ def build_adjustments(
         **report,
     }
     (processed / f"fatigue_{ctx.season}.json").write_text(json.dumps(payload, indent=1))
+    overrides, returns_report = availability_overrides(ctx)
+    (processed / f"availability_{ctx.season}.json").write_text(
+        json.dumps(
+            {
+                "generated_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                "season": ctx.season,
+                "returns": {str(c): r for c, r in sorted(returns_report.items())},
+            },
+            indent=1,
+        )
+    )
     priors = RatePriors().fit(player_match)
     return LiveAdjustments(
         season=ctx.season,
@@ -795,6 +982,7 @@ def build_adjustments(
         fatigue=fatigue,
         cold_codes=cold,
         rate_priors=priors,
+        avail_overrides=overrides,
     )
 
 
@@ -861,7 +1049,18 @@ def _availability_factors(features: pd.DataFrame, adj: LiveAdjustments) -> np.nd
     season = pd.to_numeric(features["season"], errors="coerce").to_numpy(dtype=float)
     offset = np.where(season == adj.season, gw - adj.first_gw, np.inf)
     recovery = np.clip(offset / _AVAILABILITY_RECOVERY_GWS, 0.0, 1.0)
-    return np.clip(factor + (1.0 - factor) * recovery, 0.0, 1.0)
+    result = np.clip(factor + (1.0 - factor) * recovery, 0.0, 1.0)
+    if adj.avail_overrides:
+        # Dated-news gates (availability v2) replace the heuristic outright:
+        # suspensions are hard zeros until the return GW, dated injuries are
+        # floored until it — in BOTH directions vs the linear recovery.
+        codes = pd.to_numeric(features["player_code"], errors="coerce").to_numpy(dtype=float)
+        live_mask = season == adj.season
+        for i in np.flatnonzero(live_mask):
+            override = adj.avail_overrides.get((int(codes[i]), int(gw[i])))
+            if override is not None:
+                result[i] = override
+    return result
 
 
 def live_minutes_predict(

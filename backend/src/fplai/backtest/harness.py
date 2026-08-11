@@ -1254,7 +1254,7 @@ def _predict_gws(
     if rows.empty:
         raise ValueError(f"no feature rows for season {season} GWs {list(pred_gws)}")
     _manifest, minutes_model, team_model, rates_model, calibration = _load_artifacts(models_dir)
-    _pred, gw_pred = _predict_frames(
+    _pred, gw_pred, _team_fx = _predict_frames(
         rows,
         tables["fixtures"],
         tables,

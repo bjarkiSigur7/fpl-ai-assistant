@@ -30,8 +30,10 @@ import type {
   ApiPredictionsResponse,
   ApiRefreshStatus,
   ApiStateResponse,
+  CaptaincyRow,
   ChipCurvesResponse,
   DreamTeam,
+  FixtureOutlook,
   FixturePrediction,
   GwPrediction,
   ModelManifest,
@@ -43,6 +45,7 @@ import type {
   RateTeamResponse,
   Recommendation,
   RefreshStatus,
+  SetPieceDuty,
   StateResponse,
   TeamInfo,
 } from "./types";
@@ -400,6 +403,51 @@ export function useChipCurves(entryId: number | null): SWRResponse<ChipCurvesRes
       if (MOCK) return fetchJson<ChipCurvesResponse>(path);
       const api = await fetchJson<ApiChipCurvesResponse>("/api/chip-curves");
       return { curves: api.curves };
+    },
+    BASE,
+  );
+}
+
+/** Team-level per-fixture model outlook (fixture ticker source). */
+export function useFixturesOutlook(): SWRResponse<FixtureOutlook[]> {
+  return useSWR<FixtureOutlook[]>(
+    "/api/fixtures-outlook",
+    async (path: string) => {
+      if (STATIC) {
+        const { staticFixturesOutlook } = await import("./staticBundle");
+        return staticFixturesOutlook();
+      }
+      return fetchJson<FixtureOutlook[]>(path);
+    },
+    BASE,
+  );
+}
+
+/** Set-piece duty holders (pens / direct FKs / corners). */
+export function useSetPieces(): SWRResponse<SetPieceDuty[]> {
+  return useSWR<SetPieceDuty[]>(
+    "/api/set-pieces",
+    async (path: string) => {
+      if (STATIC) {
+        const { staticSetPieces } = await import("./staticBundle");
+        return staticSetPieces();
+      }
+      return fetchJson<SetPieceDuty[]>(path);
+    },
+    BASE,
+  );
+}
+
+/** Distributional captaincy comparison for the next GW. */
+export function useCaptaincy(): SWRResponse<CaptaincyRow[]> {
+  return useSWR<CaptaincyRow[]>(
+    "/api/captaincy",
+    async (path: string) => {
+      if (STATIC) {
+        const { staticCaptaincy } = await import("./staticBundle");
+        return staticCaptaincy();
+      }
+      return fetchJson<CaptaincyRow[]>(path);
     },
     BASE,
   );

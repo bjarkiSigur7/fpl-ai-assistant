@@ -589,6 +589,46 @@ def chip_curves() -> ChipCurvesResponse:
 
 
 # --------------------------------------------------------------------------------------
+# fixture outlook / set pieces / captaincy (bundle-shaped record passthroughs)
+# --------------------------------------------------------------------------------------
+# These serve EXACTLY the shapes the static bundle ships (fixtures.json /
+# set_pieces.json / captaincy.json) by reusing the publisher's record builders,
+# so the frontend adapters are mode-agnostic. 404 with a stage hint when the
+# artifact hasn't been produced yet.
+
+
+@router.get("/fixtures-outlook")
+def fixtures_outlook() -> list[dict[str, Any]]:
+    """Team-level per-fixture model outlook (goal lambdas, CS/1X2 probabilities)."""
+    from fplai.publish import _fixture_records
+
+    df = _load_parquet_or_404("team_fixtures.parquet", "fplai predict")
+    season = int(df["season"].max())
+    _, shorts = _team_names(season)
+    return _fixture_records(df, season, shorts)
+
+
+@router.get("/set-pieces")
+def set_pieces() -> list[dict[str, Any]]:
+    """Set-piece duty holders (pens/direct FKs/corners) from the live roster."""
+    from fplai.publish import _set_piece_records
+
+    roster = _load_parquet_or_404("live_roster.parquet", "fplai predict")
+    season = int(roster["season"].max())
+    _, shorts = _team_names(season)
+    return _set_piece_records(roster, shorts)
+
+
+@router.get("/captaincy")
+def captaincy() -> list[dict[str, Any]]:
+    """Distributional captaincy comparison for the next GW (sampler-driven)."""
+    from fplai.publish import _captaincy_records
+
+    df = _load_parquet_or_404("captaincy.parquet", "fplai predict")
+    return _captaincy_records(df)
+
+
+# --------------------------------------------------------------------------------------
 # /players/{player_code}
 # --------------------------------------------------------------------------------------
 

@@ -16,7 +16,7 @@ import { Sparkbar, SparkbarLegend } from "@/components/charts";
 import { ScrollFade } from "@/components/ScrollFade";
 import { Card, EmptyState, PageTitle, RiskMark, Skeleton } from "@/components/ui";
 
-type SortKey = "name" | "pos" | "club" | "price" | "xp" | "xph" | "q0";
+type SortKey = "name" | "pos" | "club" | "price" | "xp" | "xph" | "q0" | "own" | "diff";
 
 interface Sort {
   key: SortKey;
@@ -31,6 +31,8 @@ const DEFAULT_DIR: Record<SortKey, 1 | -1> = {
   xp: -1,
   xph: -1,
   q0: 1,
+  own: -1,
+  diff: -1,
 };
 
 /** <sm sort control labels — the column headers are hidden with the table. */
@@ -42,7 +44,35 @@ const SORT_LABEL: Record<SortKey, string> = {
   club: "CLUB",
   pos: "POSITION",
   q0: "RISK q0",
+  own: "OWNERSHIP %",
+  diff: "DIFFERENTIAL",
 };
+
+/** Differential score: horizon xP over an ownership floor — the gold quadrant
+ * (high xP, low owned) ranks first; template picks sink. */
+function differentialScore(p: IndexedPlayer): number {
+  return p.xpHorizon / Math.max(p.ownership ?? 100, 2);
+}
+
+/** Penalty-duty badge (P1 = first-choice taker), from the official bootstrap. */
+function PenBadge({ order }: { order: number | null }) {
+  if (order === null) return null;
+  return (
+    <span
+      className="ml-1.5 rounded bg-raised px-1 py-0.5 font-mono text-[9px] text-pitch-bright"
+      title={`Penalty taker #${order}`}
+    >
+      P{order}
+    </span>
+  );
+}
+
+/** Availability tooltip: the FPL news line + the model's parsed return GW. */
+function riskTitle(p: IndexedPlayer): string | undefined {
+  if (!p.news && p.returnGw === null) return undefined;
+  const bits = [p.news, p.returnGw !== null ? `model expects back GW${p.returnGw}` : null];
+  return bits.filter(Boolean).join(" · ");
+}
 
 function compare(a: IndexedPlayer, b: IndexedPlayer, sort: Sort, gw: number): number {
   const get = (p: IndexedPlayer): string | number => {
@@ -61,6 +91,10 @@ function compare(a: IndexedPlayer, b: IndexedPlayer, sort: Sort, gw: number): nu
         return p.xpHorizon;
       case "q0":
         return p.q0ByGw.get(gw) ?? 1;
+      case "own":
+        return p.ownership ?? -1;
+      case "diff":
+        return differentialScore(p);
     }
   };
   const va = get(a);
@@ -109,8 +143,13 @@ export default function PlayersPage() {
   const [pos, setPos] = useState<Position | "ALL">("ALL");
   const [club, setClub] = useState<string>("ALL");
   const [sort, setSort] = useState<Sort>({ key: "xp", dir: -1 });
+  const [diffOnly, setDiffOnly] = useState(false);
 
   const gw = index?.nextGw ?? 0;
+  const hasOwnership = useMemo(
+    () => (index ? [...index.byCode.values()].some((p) => p.ownership !== null) : false),
+    [index],
+  );
 
   const rows = useMemo(() => {
     if (!index) return [];
@@ -118,14 +157,15 @@ export default function PlayersPage() {
     return [...index.byCode.values()]
       .filter((p) => pos === "ALL" || p.position === pos)
       .filter((p) => club === "ALL" || p.team_short === club)
+      .filter((p) => !diffOnly || ((p.ownership ?? 100) < 15 && (p.q0ByGw.get(gw) ?? 1) < 0.4))
       .filter(
         (p) =>
           needle === "" ||
           p.web_name.toLowerCase().includes(needle) ||
           p.team_short.toLowerCase().includes(needle),
       )
-      .sort((a, b) => compare(a, b, sort, gw));
-  }, [index, q, pos, club, sort, gw]);
+      .sort((a, b) => compare(a, b, diffOnly ? { key: "diff", dir: -1 } : sort, gw));
+  }, [index, q, pos, club, sort, gw, diffOnly]);
 
   const maxXp = useMemo(
     () => (index ? Math.max(...[...index.byCode.values()].map((p) => p.xpByGw.get(gw) ?? 0), 1) : 1),
@@ -170,6 +210,20 @@ export default function PlayersPage() {
             </button>
           ))}
         </div>
+        {hasOwnership ? (
+          <button
+            onClick={() => setDiffOnly((v) => !v)}
+            aria-pressed={diffOnly}
+            title="Under 15% owned, fit, ranked by horizon xP per ownership point"
+            className={`hit relative rounded border px-2.5 py-1.5 font-mono text-[10.5px] tracking-[0.12em] ${
+              diffOnly
+                ? "border-pitch bg-raised text-pitch-bright"
+                : "border-hairline text-ink-dim hover:text-ink-mid"
+            }`}
+          >
+            ◆ DIFFERENTIALS
+          </button>
+        ) : null}
         <select
           value={club}
           onChange={(e) => setClub(e.target.value)}
@@ -240,6 +294,7 @@ export default function PlayersPage() {
                               DGW
                             </span>
                           ) : null}
+                          <PenBadge order={p.penOrder} />
                         </span>
                         <span className="shrink-0 font-mono text-[15px] font-semibold tnum text-ink">
                           {xp2(xpGw)}
@@ -252,8 +307,11 @@ export default function PlayersPage() {
                         <span className="tnum">
                           {p.team_short} · {p.position} · £{moneyBare(p.price)} · Σ{" "}
                           {p.xpHorizon.toFixed(1)}
+                          {p.ownership !== null ? ` · ${p.ownership.toFixed(1)}%` : ""}
                         </span>
-                        <RiskMark q0={p.q0ByGw.get(gw) ?? 0} />
+                        <span title={riskTitle(p)}>
+                          <RiskMark q0={p.q0ByGw.get(gw) ?? 0} />
+                        </span>
                       </div>
                       <div className="mt-1.5">
                         <Sparkbar components={row} max={maxXp} />
@@ -275,6 +333,7 @@ export default function PlayersPage() {
                 <Th label={`xP GW${gw}`} k="xp" sort={sort} onSort={onSort} className="text-right" />
                 <th className="microlabel px-3 py-2">COMPONENTS</th>
                 <Th label={`Σ xP ${index.gws.length}GW`} k="xph" sort={sort} onSort={onSort} className="text-right" />
+                <Th label="OWN%" k="own" sort={sort} onSort={onSort} className="text-right" />
                 <Th label="RISK q0" k="q0" sort={sort} onSort={onSort} />
               </tr>
             </thead>
@@ -295,6 +354,7 @@ export default function PlayersPage() {
                           DGW
                         </span>
                       ) : null}
+                      <PenBadge order={p.penOrder} />
                     </td>
                     <td className="px-3 py-2 font-mono text-[11px] text-ink-dim">{p.position}</td>
                     <td className="px-3 py-2 font-mono text-[11px] text-ink-dim">{p.team_short}</td>
@@ -310,8 +370,13 @@ export default function PlayersPage() {
                     <td className="px-3 py-2 text-right font-mono text-[12px] tnum text-ink-mid">
                       {p.xpHorizon.toFixed(1)}
                     </td>
+                    <td className="px-3 py-2 text-right font-mono text-[12px] tnum text-ink-dim">
+                      {p.ownership !== null ? p.ownership.toFixed(1) : "—"}
+                    </td>
                     <td className="px-3 py-2">
-                      <RiskMark q0={p.q0ByGw.get(gw) ?? 0} />
+                      <span title={riskTitle(p)}>
+                        <RiskMark q0={p.q0ByGw.get(gw) ?? 0} />
+                      </span>
                     </td>
                   </tr>
                 );

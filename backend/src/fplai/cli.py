@@ -59,6 +59,14 @@ def build(seasons: SeasonsOpt = None) -> None:
 
 
 @app.command()
+def ingest() -> None:
+    """Splice played live-season GW outcomes into the processed tables."""
+    from fplai.pipeline import run_ingest
+
+    run_ingest()
+
+
+@app.command()
 def refresh() -> None:
     """Pull fresh data from all sources, then re-predict and re-optimize."""
     from fplai.pipeline import run_refresh

@@ -1,8 +1,10 @@
 # STATUS.md — what works today
 
-Last updated: 2026-07-24 (public-release integrator pass: static publisher +
+Last updated: 2026-08-11 (pre-GW1 research + upgrade pass — see "August 2026
+upgrade pass" below; research synthesis in `research/aug-2026-update.md`).
+Previous pass 2026-07-24 (public-release integrator pass: static publisher +
 dual-mode frontend + GitHub Actions release engineering verified end to end —
-see "Public release engineering" below). Previous pass 2026-07-23 (stage-6:
+see "Public release engineering" below). Before that 2026-07-23 (stage-6:
 the Monte Carlo season-simulation
 chip planner is live — predictions extend through GW19, `fplai simulate` prices every
 chip week over the FULL set-1 window with rollout-level uncertainty, and the old
@@ -13,6 +15,68 @@ Companions: `ARCHITECTURE.md` (module map + schemas incl. the stage-6 contracts)
 launch), `MODEL_DESIGN_INPUTS.md` (model spec), `research/chip-strategy-verdict.md`
 (evidence review of the launch-day chip cascade — its recommendations #1/#2 are what
 `fplai simulate` implements).
+
+## August 2026 upgrade pass — COMPLETE (2026-08-11, 10 days before GW1)
+
+Deep research (4 parallel agents: season state / modeling SOTA / community-tool
+feature mining / data-source audit — synthesis in `research/aug-2026-update.md`)
+followed by an implementation pass. Verified: **886 offline tests pass** (was
+855; +ingest/availability/captaincy/publish/API suites), ruff clean, eslint
+clean, both frontend build flavours green + rating parity suite, real live
+chain re-run against the 2026-08-11 snapshot (577 elements) and
+`publish-static` produced the extended 11-file bundle at **556,344 B (28% of
+budget)**.
+
+1. **In-season outcome ingestion** (`fplai.data.ingest`, `fplai ingest`,
+   wired into refresh + model-run.yml between build and predict): played
+   live-season GWs are spliced into player_match/player_gw from
+   `element-summary` history rows (DGW-safe, carries per-GW price, BPS, starts,
+   DefCon components). Freeze bookkeeping via bootstrap `data_checked` +
+   `ingest_state.json` — zero API requests between GWs. **This closed a
+   season-critical gap**: build is vaastav-only and vaastav ended weekly
+   updates after 2024-25, so form features would have starved from GW2.
+2. **Availability v2** (`fplai.data.live`): FPL news strings parsed for dated
+   returns ("Expected back 23 Aug" / "Suspended until 6 Sep" — the live grammar
+   is a small closed vocabulary, 63 flagged players on 2026-08-11, 10 dated).
+   Per-(player, GW) gates from the player's OWN team's kickoffs: suspensions
+   hard-zero until the return GW then instantly 1.0 (a ban is not a fitness
+   state); dated injuries floored until the return GW with a 0.65 comeback-GW
+   ramp; undated news keeps the linear 4-GW heuristic. Persisted to
+   `availability_{season}.json`; return GW published per player.
+3. **Set-piece duties**: `penalties_order`/`direct_freekicks_order`/
+   `corners_and_indirect_freekicks_order` (+ notes, + `news_added`,
+   + `price_change_percent`) parsed from the bootstrap into live_roster —
+   130 duty holders published in `set_pieces.json`; P-badges on the players
+   table.
+4. **Team fixture outlook**: `team_fixtures.parquet` persisted from the
+   TeamModel's per-fixture predictions (λ for/against, CS%, 1X2, odds-blend
+   flag) → `fixtures.json` → new **Fixtures page**: model-based difficulty
+   ticker (attack/defence/overall lenses, GW-range filter, sort-by-best-run,
+   CVD-safe diverging ramp) — our own Dixon-Coles difficulty, not official FDR.
+5. **Distributional captaincy** (`pipeline._captaincy_frame` → 
+   `captaincy.parquet` → `captaincy.json`): 2,000 joint sampler rollouts for
+   the top-8 candidates — P(haul ≥10), P(blank ≤2), P(best, ties split),
+   P(beats top pick) — dashboard card. Real GW1 output: Haaland 8.22 xP,
+   P(haul) 0.33, P(best) 0.23; Thiago beats him in 49.6% of rollouts with a
+   quarter of the blank risk.
+6. **Ownership surfaces**: `selected_by_percent` → players.json → OWN% column
+   + differential quick-filter (<15% owned, fit, ranked by xP per ownership
+   point) on the players page.
+7. **Solver tail guard**: `SolveParams.no_transfer_last_gws` (chip-exempt MILP
+   constraint; research follow-up #1) — live optimize runs with tail=2 when
+   horizon ≥ 4.
+8. **Latent bug fixed**: football-data's pre-publication 301 (2627/E0.csv →
+   EC.csv, the National League) would have been silently ingested as PL odds;
+   downloads now assert division E0 on data rows.
+9. **API parity**: GET /api/fixtures-outlook, /api/set-pieces, /api/captaincy
+   serve the bundle shapes in local mode (publisher record-builders reused).
+
+Season facts locked by the research pass (see `research/aug-2026-update.md`):
+no rule/API changes since launch; Salah/Konaté/Cucurella/Gordon/Stones all left
+the PL permanently (none will be added); pool 555→577; merged 3-week
+international break GW5→GW6 (26 Sep–10 Oct) confirmed; no AFCON, no announced
+FT top-up event; BB/TC playable GW1, WC/FH from GW2; official app now ships a
+price predictor + live ranks + projected bonus (deliberately NOT rebuilt here).
 
 ## TL;DR
 
@@ -33,7 +97,7 @@ simulation (112 s), and the recommendation's chip advice speaks probability
 greedy in-horizon deltas. See "Season simulation" below.
 
 ```
-855 offline tests pass    (backend: uv run pytest -q -m "not live")
+886 offline tests pass    (backend: uv run pytest -q -m "not live")
 ruff clean                (uv run ruff check src tests)
 eslint clean + prod build (frontend: npm run lint && npm run build — default AND
                            NEXT_PUBLIC_STATIC=1 static-export flavours)
@@ -298,10 +362,13 @@ time in memory; artifacts on disk are untouched.
    position×price-decile priors carry no Championship data; promoted-strength
    multipliers (COV 1.08/IPS 1.00/HUL 0.92) and NEW_MANAGER_SHRINK=0.15 are
    documented judgment constants.
-4. **Availability gating is a linear 4-GW recovery heuristic** from the
-   snapshot flag; news return-date strings are not parsed — flagged players'
-   GW2+ xP may be over/under-stated (Saliba and Rodri are status-i today and
-   correctly zeroed for GW1).
+4. **Availability gating v2 (2026-08-11)**: dated news ("Expected back D Mon",
+   "Suspended until D Mon") now gates per (player, GW) against the player's
+   own team's kickoffs — suspensions hard-zero then instantly back, dated
+   injuries floored with a comeback ramp. Remaining heuristic: UNDATED news
+   ("Unknown return date", e.g. Rodri/Saliba today) still uses the linear 4-GW
+   recovery — a status-transition hazard model (FPL-Core-Insights git history
+   is a free training corpus) is the documented next step.
 5. **`fplai build` alone temporarily drops the 2026 splice** (it rebuilds from
    raw, which has no 2026 rows) — the next `fplai predict` re-splices;
    `refresh`'s build->predict->optimize order handles it.

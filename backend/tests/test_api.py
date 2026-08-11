@@ -659,6 +659,73 @@ class TestArtifactEndpoints:
         assert resp.status_code == 404
         assert "chip_curves.parquet" in resp.json()["detail"]
 
+    def test_fixtures_outlook_ok(self, api_env: SimpleNamespace, client: TestClient) -> None:
+        pd.DataFrame(
+            {
+                "season": [2026],
+                "gw": [1],
+                "fpl_fixture_id": [1],
+                "kickoff_utc": [pd.Timestamp("2026-08-21 19:00:00+00:00")],
+                "home_team_code": [3],
+                "away_team_code": [7],
+                "home_lambda": [1.61234],
+                "away_lambda": [1.1],
+                "p_cs_home": [0.312345],
+                "p_cs_away": [0.2],
+                "p_home_win": [0.5],
+                "p_draw": [0.25],
+                "p_away_win": [0.25],
+                "odds_blended": [True],
+            }
+        ).to_parquet(api_env.processed / "team_fixtures.parquet", index=False)
+        body = client.get("/api/fixtures-outlook").json()
+        assert len(body) == 1
+        assert body[0]["gw"] == 1 and body[0]["home_xg"] == 1.612
+        assert body[0]["odds_blended"] is True
+
+    def test_fixtures_outlook_missing_404(self, client: TestClient) -> None:
+        resp = client.get("/api/fixtures-outlook")
+        assert resp.status_code == 404
+        assert "team_fixtures.parquet" in resp.json()["detail"]
+
+    def test_set_pieces_ok(self, api_env: SimpleNamespace, client: TestClient) -> None:
+        pd.DataFrame(
+            {
+                "season": [2026, 2026],
+                "player_code": [10, 20],
+                "web_name": ["PenTaker", "NoDuties"],
+                "position": ["MID", "DEF"],
+                "team_code": [3, 7],
+                "price": [80, 45],
+                "penalties_order": pd.array([1, None], dtype="Int64"),
+                "penalties_text": ["Shares duties", ""],
+            }
+        ).to_parquet(api_env.processed / "live_roster.parquet", index=False)
+        body = client.get("/api/set-pieces").json()
+        assert len(body) == 1
+        assert body[0]["pen"] == 1 and body[0]["web_name"] == "PenTaker"
+        assert body[0]["pen_note"] == "Shares duties"
+
+    def test_captaincy_ok(self, api_env: SimpleNamespace, client: TestClient) -> None:
+        pd.DataFrame(
+            {
+                "season": [2026, 2026],
+                "gw": [1, 1],
+                "player_code": [10, 20],
+                "xp": [8.0, 7.0],
+                "mean_pts": [7.9, 6.8],
+                "sd_pts": [4.1, 3.9],
+                "p_haul": [0.33, 0.28],
+                "p_blank": [0.15, 0.18],
+                "p_best": [0.44, 0.31],
+                "p_beats_top": [float("nan"), 0.42],
+                "n_draws": [2000, 2000],
+            }
+        ).to_parquet(api_env.processed / "captaincy.parquet", index=False)
+        body = client.get("/api/captaincy").json()
+        assert [c["player_code"] for c in body] == [10, 20]
+        assert body[0]["p_beats_top"] is None and body[1]["p_beats_top"] == 0.42
+
 
 # --------------------------------------------------------------------------------------
 # /players/{player_code}

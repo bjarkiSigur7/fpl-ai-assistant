@@ -26,9 +26,11 @@
 
 import {
   RateTeamValidationError,
+  type CaptaincyRow,
   type ChipCurvePoint,
   type ChipCurvesResponse,
   type DreamTeam,
+  type FixtureOutlook,
   type FixturePrediction,
   type GwPrediction,
   type PlayerDetail,
@@ -38,6 +40,7 @@ import {
   type RateTeamResponse,
   type Recommendation,
   type RefreshStatus,
+  type SetPieceDuty,
   type StateResponse,
   type TeamInfo,
 } from "./types";
@@ -79,6 +82,10 @@ interface BundlePlayer extends RatingPoolPlayer {
   team_short: string | null;
   status: string;
   q0_gw1: number | null;
+  ownership?: number | null;
+  news?: string | null;
+  return_gw?: number | null;
+  pen_order?: number | null;
 }
 
 /** Per-fixture detail nested in a predictions_gw1.json row (publisher v1+). */
@@ -256,6 +263,10 @@ export async function staticPredictions(): Promise<PredictionsResponse> {
         position: p.position as Position,
         price: p.price,
         web_name: p.web_name,
+        ownership: p.ownership ?? null,
+        news: p.news ?? null,
+        return_gw: p.return_gw ?? null,
+        pen_order: p.pen_order ?? null,
       });
     }
   }
@@ -363,6 +374,18 @@ export async function staticChipCurves(): Promise<ChipCurvesResponse> {
     ? (data as ChipCurvePoint[])
     : unwrap<ChipCurvePoint[]>(data, "curves");
   return { curves };
+}
+
+export async function staticFixturesOutlook(): Promise<FixtureOutlook[]> {
+  return loadCached<FixtureOutlook[]>("fixtures.json");
+}
+
+export async function staticSetPieces(): Promise<SetPieceDuty[]> {
+  return loadCached<SetPieceDuty[]>("set_pieces.json");
+}
+
+export async function staticCaptaincy(): Promise<CaptaincyRow[]> {
+  return loadCached<CaptaincyRow[]>("captaincy.json");
 }
 
 /** Static mode never runs the pipeline; the batch is GitHub Actions' job. */
