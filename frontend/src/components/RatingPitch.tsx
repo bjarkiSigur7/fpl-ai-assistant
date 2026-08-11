@@ -90,6 +90,7 @@ function SlotChip({
   widthPct,
   highlight,
   onRemove,
+  onPickPosition,
 }: {
   p: RatingSlotPlayer | null;
   pos: Position;
@@ -98,14 +99,20 @@ function SlotChip({
   widthPct: number;
   highlight: RatingHighlight | null;
   onRemove: (code: number) => void;
+  onPickPosition: (pos: Position) => void;
 }) {
   const style = { left: `${x}%`, top: `${y}%`, width: `${widthPct}%` };
   if (!p) {
     return (
       <div className="absolute -translate-x-1/2 -translate-y-1/2" style={style}>
-        <div className="rounded border border-dashed border-hairline bg-bg/30 px-1 py-2.5 text-center">
+        <button
+          onClick={() => onPickPosition(pos)}
+          title={`Show ${pos} in the player pool`}
+          aria-label={`Empty ${pos} slot — filter the player pool to ${pos}`}
+          className="hit relative block w-full rounded border border-dashed border-hairline bg-bg/30 px-1 py-2.5 text-center transition-colors hover:border-ink-dim hover:bg-raised/60"
+        >
           <span className="microlabel">{pos}</span>
-        </div>
+        </button>
       </div>
     );
   }
@@ -152,12 +159,15 @@ export function RatingPitch({
   slots,
   highlight,
   onRemove,
+  onPickPosition,
   right,
 }: {
   /** Per position: quota-length arrays, filled from the front, null = empty slot. */
   slots: Record<Position, (RatingSlotPlayer | null)[]>;
   highlight: RatingHighlight | null;
   onRemove: (code: number) => void;
+  /** Empty-slot tap: focus the player pool on that position. */
+  onPickPosition: (pos: Position) => void;
   right?: string;
 }) {
   return (
@@ -180,6 +190,7 @@ export function RatingPitch({
                 widthPct={widthPct}
                 highlight={highlight}
                 onRemove={onRemove}
+                onPickPosition={onPickPosition}
               />
             ));
           })}

@@ -20,7 +20,7 @@ const LINKS = [
 /** Locked visitors see the open tool plus one honest way in. */
 const LOCKED_LINKS = [
   { href: "/rating", label: "AI RATING" },
-  { href: "/", label: "ENTER KEY", lock: true },
+  { href: "/unlock", label: "ENTER KEY", lock: true },
 ];
 
 export function Nav() {

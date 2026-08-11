@@ -7,7 +7,7 @@
  * against the model optimum (dream team) and the cheapest-legal floor.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { OFFLINE_HINT, fetchDreamTeam, rateTeam } from "@/lib/api";
 import { seasonLabel } from "@/lib/format";
 import { usePlayerIndex, type IndexedPlayer } from "@/lib/playerIndex";
@@ -67,6 +67,8 @@ export default function RatingPage() {
   const [modelHint, setModelHint] = useState<string | null>(null);
   const { locked } = useGate();
   const [showUnlock, setShowUnlock] = useState(false);
+  const [poolPos, setPoolPos] = useState<Position | "ALL">("ALL");
+  const poolRef = useRef<HTMLDivElement | null>(null);
 
   const gw = index?.nextGw ?? 0;
   const selected = useMemo(() => new Set(codes), [codes]);
@@ -186,6 +188,15 @@ export default function RatingPage() {
     setCodes([]);
   }, [clearOutcome]);
 
+  /** Empty-slot tap on the pitch: filter the pool to that position. */
+  const pickPosition = useCallback((pos: Position) => {
+    setPoolPos(pos);
+    // Stacked layout (below lg): the pool sits under the squad — bring it up.
+    if (!window.matchMedia("(min-width: 1024px)").matches) {
+      poolRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
   const slots = useMemo(() => {
     const out = {} as Record<Position, (RatingSlotPlayer | null)[]>;
     for (const pos of POSITIONS) {
@@ -244,13 +255,15 @@ export default function RatingPage() {
         </div>
       ) : (
         <div className="grid items-start gap-5 lg:grid-cols-2">
-          <div className="order-2 min-w-0 lg:order-1">
+          <div ref={poolRef} className="order-2 min-w-0 scroll-mt-3 lg:order-1">
             <RatingPlayerPanel
               index={index}
               gw={gw}
               selected={selected}
               canAdd={canAdd}
               onToggle={toggle}
+              pos={poolPos}
+              onPosChange={setPoolPos}
             />
           </div>
           <div className="order-1 min-w-0 space-y-5 lg:order-2">
@@ -313,6 +326,7 @@ export default function RatingPage() {
               slots={slots}
               highlight={highlight}
               onRemove={remove}
+              onPickPosition={pickPosition}
               right={
                 result
                   ? `BEST XI ${result.formation_gw1} · GW${result.from_gw}`

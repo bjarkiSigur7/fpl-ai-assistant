@@ -84,6 +84,8 @@ export function RatingPlayerPanel({
   selected,
   canAdd,
   onToggle,
+  pos,
+  onPosChange,
 }: {
   index: PlayerIndex;
   gw: number;
@@ -91,9 +93,11 @@ export function RatingPlayerPanel({
   /** null when the player can legally be added; otherwise the blocking rule. */
   canAdd: (p: IndexedPlayer) => string | null;
   onToggle: (code: number) => void;
+  /** Position filter is owned by the page — the pitch's empty slots set it too. */
+  pos: Position | "ALL";
+  onPosChange: (pos: Position | "ALL") => void;
 }) {
   const [q, setQ] = useState("");
-  const [pos, setPos] = useState<Position | "ALL">("ALL");
   const [club, setClub] = useState<string>("ALL");
   const [maxPrice, setMaxPrice] = useState<number>(0); // 0 = no cap
   const [sort, setSort] = useState<SortKey>("xp");
@@ -155,7 +159,7 @@ export function RatingPlayerPanel({
               key={p}
               role="tab"
               aria-selected={pos === p}
-              onClick={() => setPos(p)}
+              onClick={() => onPosChange(p)}
               className={`hit relative rounded px-2.5 py-1 font-mono text-[10.5px] tracking-[0.12em] ${
                 pos === p ? "bg-raised text-ink" : "text-ink-dim hover:text-ink-mid"
               }`}

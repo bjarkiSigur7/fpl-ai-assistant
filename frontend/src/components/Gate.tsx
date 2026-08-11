@@ -7,9 +7,9 @@
  * apology.
  */
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useCallback, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useGate } from "@/lib/gate";
 
 export function LockGlyph({ className = "" }: { className?: string }) {
@@ -157,13 +157,26 @@ export function InlineUnlock({ onUnlocked }: { onUnlocked?: () => void }) {
 }
 
 /**
- * Layout wrapper: gates every route except /rating on the public build.
+ * Layout wrapper: gates every route except /rating and /unlock on the public
+ * build. Keyless visitors landing on "/" are bounced to the open AI Rating
+ * tool instead of a key wall — the full-page key screen lives at /unlock (the
+ * nav's ENTER KEY) and still appears in place on gated deep links.
  * Pre-hydration renders the gate (never the desk) — prerendered HTML included.
  */
 export function GateShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { locked } = useGate();
-  const open = pathname === "/rating" || pathname.startsWith("/rating/");
+  const router = useRouter();
+  const { ready, locked } = useGate();
+  const open =
+    pathname === "/rating" ||
+    pathname.startsWith("/rating/") ||
+    pathname === "/unlock" ||
+    pathname.startsWith("/unlock/");
+  const bounceToRating = locked && pathname === "/";
+  useEffect(() => {
+    if (ready && bounceToRating) router.replace("/rating");
+  }, [ready, bounceToRating, router]);
+  if (bounceToRating) return null;
   if (!locked || open) return <>{children}</>;
   return <GateScreen />;
 }
