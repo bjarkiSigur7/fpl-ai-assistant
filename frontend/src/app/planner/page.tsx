@@ -10,18 +10,30 @@ import { useMemo, useState } from "react";
 import { OFFLINE_HINT, useChipCurves, useRecommendation } from "@/lib/api";
 import { moneyBare, xp1 } from "@/lib/format";
 import { usePlayerIndex, type PlayerIndex } from "@/lib/playerIndex";
-import { chipName, type ChipAdvice, type ChipCurvePoint, type GwPlan } from "@/lib/types";
+import {
+  chipName,
+  POSITIONS,
+  type ChipAdvice,
+  type ChipCurvePoint,
+  type GwPlan,
+} from "@/lib/types";
 import { MiniBarChart } from "@/components/charts";
 import { ScrollFade } from "@/components/ScrollFade";
 import { Card, CardHead, EmptyState, PageTitle, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
 
+/** Free-Hit chip ids — their GW plays a SEPARATE squad and reverts after. */
+const FH_CHIPS = new Set<string>(["fh1", "fh2"]);
+
 function GwCard({
   plan,
+  prev,
   index,
   first,
 }: {
   plan: GwPlan;
+  /** The previous GW's plan — the held squad an FH week temporarily replaces. */
+  prev: GwPlan | null;
   index: PlayerIndex;
   first: boolean;
 }) {
@@ -29,6 +41,25 @@ function GwCard({
     in: codeIn,
     out: plan.transfers_out[i] ?? null,
   }));
+  // FH weeks make no permanent transfers (the MILP models a separate squad),
+  // so derive the one-week rentals by diffing against the held squad. Sorting
+  // both sides by position (then price) yields like-for-like pairs — the squad
+  // shape is fixed at 2-5-5-3, so ins and outs balance per position.
+  const isFh = plan.chip !== null && FH_CHIPS.has(plan.chip);
+  const byPosThenPrice = (a: number, b: number) => {
+    const pa = index.get(a);
+    const pb = index.get(b);
+    const posDelta =
+      POSITIONS.indexOf(pa?.position ?? "FWD") - POSITIONS.indexOf(pb?.position ?? "FWD");
+    return posDelta !== 0 ? posDelta : (pb?.price ?? 0) - (pa?.price ?? 0);
+  };
+  const rentals =
+    isFh && prev
+      ? {
+          ins: plan.squad.filter((c) => !prev.squad.includes(c)).sort(byPosThenPrice),
+          outs: prev.squad.filter((c) => !plan.squad.includes(c)).sort(byPosThenPrice),
+        }
+      : null;
   return (
     <div
       className={`w-56 shrink-0 snap-start scroll-ml-4 rounded-md border bg-surface ${
@@ -46,7 +77,38 @@ function GwCard({
         ) : null}
       </div>
       <div className="space-y-2 px-3 py-2.5">
-        {moves.length === 0 ? (
+        {rentals ? (
+          rentals.ins.length === 0 ? (
+            <div className="font-mono text-[11px] text-ink-dim">FH — SAME 15 KEPT</div>
+          ) : (
+            <>
+              <div className="microlabel">FH RENTALS — THIS GW ONLY</div>
+              {rentals.ins.map((codeIn, i) => (
+                <div key={codeIn} className="space-y-0.5 font-mono text-[11px]">
+                  <div className="text-pitch-bright">▲ IN&nbsp;&nbsp;{index.name(codeIn)}</div>
+                  {rentals.outs[i] !== undefined ? (
+                    <div className="text-neg">▼ OUT {index.name(rentals.outs[i])}</div>
+                  ) : null}
+                </div>
+              ))}
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-dim">
+                SQUAD REVERTS GW{plan.gw + 1}
+              </div>
+            </>
+          )
+        ) : isFh ? (
+          // FH in the horizon's first GW: no prior plan week to diff against —
+          // the full one-week squad is the statement.
+          <>
+            <div className="microlabel">FREE HIT SQUAD — THIS GW ONLY</div>
+            <div className="font-mono text-[11px] leading-relaxed text-ink-mid">
+              {plan.squad.map((c) => index.name(c)).join(" · ")}
+            </div>
+            <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-dim">
+              SQUAD REVERTS GW{plan.gw + 1}
+            </div>
+          </>
+        ) : moves.length === 0 ? (
           <div className="font-mono text-[11px] text-ink-dim">NO TRANSFERS — ROLL</div>
         ) : (
           moves.map((m, i) => (
@@ -335,7 +397,13 @@ export default function PlannerPage() {
           <ScrollFade fade="surface" arrow innerClassName="snap-x snap-mandatory">
             <div className="flex gap-3 p-4">
               {gws.map((g, i) => (
-                <GwCard key={g.gw} plan={g} index={index} first={i === 0} />
+                <GwCard
+                  key={g.gw}
+                  plan={g}
+                  prev={i > 0 ? gws[i - 1] : null}
+                  index={index}
+                  first={i === 0}
+                />
               ))}
             </div>
           </ScrollFade>
