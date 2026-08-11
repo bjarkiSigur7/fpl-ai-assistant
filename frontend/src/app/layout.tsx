@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Archivo_Black, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
+import { GateShell } from "@/components/Gate";
 import { Nav } from "@/components/Nav";
 import { Ticker } from "@/components/Ticker";
 
@@ -42,7 +43,7 @@ export default function RootLayout({
         <Ticker />
         <Nav />
         <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pb-20 pt-6 sm:px-6">
-          {children}
+          <GateShell>{children}</GateShell>
         </main>
         <footer className="border-t border-hairline-soft">
           <div className="mx-auto w-full max-w-[1280px] px-4 py-4 sm:px-6">

@@ -23,6 +23,8 @@ import {
   type RatingHighlight,
   type RatingSlotPlayer,
 } from "@/components/RatingPitch";
+import { InlineUnlock } from "@/components/Gate";
+import { useGate } from "@/lib/gate";
 import { RatingMobileBar } from "@/components/RatingMobileBar";
 import { RatingPlayerPanel } from "@/components/RatingPlayerPanel";
 import { RatingResult } from "@/components/RatingResult";
@@ -63,6 +65,8 @@ export default function RatingPage() {
   const [evaluating, setEvaluating] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
   const [modelHint, setModelHint] = useState<string | null>(null);
+  const { locked } = useGate();
+  const [showUnlock, setShowUnlock] = useState(false);
 
   const gw = index?.nextGw ?? 0;
   const selected = useMemo(() => new Set(codes), [codes]);
@@ -154,7 +158,8 @@ export default function RatingPage() {
     }
   }, [codes]);
 
-  const loadModelXv = useCallback(async () => {
+  const doLoadModel = useCallback(async () => {
+    setShowUnlock(false);
     setLoadingModel(true);
     clearOutcome();
     try {
@@ -166,6 +171,15 @@ export default function RatingPage() {
       setLoadingModel(false);
     }
   }, [clearOutcome]);
+
+  const loadModelXv = useCallback(async () => {
+    if (locked) {
+      // Keyholders-only shortcut: surface the inline key form instead.
+      setShowUnlock(true);
+      return;
+    }
+    await doLoadModel();
+  }, [locked, doLoadModel]);
 
   const clearSquad = useCallback(() => {
     clearOutcome();
@@ -250,7 +264,11 @@ export default function RatingPage() {
               onEvaluate={evaluate}
               onLoadModel={loadModelXv}
               onClear={clearSquad}
+              modelLocked={locked}
             />
+            {locked && showUnlock ? (
+              <InlineUnlock onUnlocked={() => void doLoadModel()} />
+            ) : null}
             {modelHint ? (
               <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-dim">
                 <span aria-hidden="true" className="mr-1.5 text-warn">

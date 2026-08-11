@@ -10,6 +10,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_URL, MOCK, STATIC, startRefresh, useDeskState, useRefreshStatus } from "@/lib/api";
+import { GATE_ENABLED, relock, useGate } from "@/lib/gate";
+import { LockGlyph } from "@/components/Gate";
 import { gwWindow, seasonLabel, shortUtc } from "@/lib/format";
 import { Card, CardHead, PageTitle, StatusBadge, Skeleton } from "@/components/ui";
 import { useEntryId } from "@/lib/useEntryId";
@@ -233,6 +235,30 @@ function DataFeedCard() {
   );
 }
 
+/** Public build: keyholders can re-lock the desk (shared machines). */
+function GateCard() {
+  const { locked } = useGate();
+  if (!GATE_ENABLED || locked) return null;
+  return (
+    <Card>
+      <CardHead label="DESK ACCESS" right="UNLOCKED" />
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <p className="max-w-lg text-[13px] leading-relaxed text-ink-dim">
+          This browser holds the desk key. Re-locking hides everything except the
+          AI Rating tool until the key is entered again.
+        </p>
+        <button
+          onClick={relock}
+          className="hit relative inline-flex items-center gap-1.5 rounded border border-hairline px-3 py-1.5 font-mono text-[10.5px] tracking-[0.12em] text-ink-mid transition-colors hover:border-ink-dim hover:bg-raised hover:text-ink"
+        >
+          <LockGlyph />
+          LOCK THE DESK
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { isLoading } = useDeskState();
   if (STATIC) {
@@ -240,6 +266,7 @@ export default function SettingsPage() {
       <div>
         <PageTitle kicker="DESK CONFIGURATION" title="SETTINGS" />
         <div className="space-y-5">
+          <GateCard />
           {isLoading ? <Skeleton className="h-64" /> : <DataFeedCard />}
         </div>
       </div>

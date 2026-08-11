@@ -6,6 +6,7 @@
  * conveniences, and the EVALUATE button (display type — the page's one action).
  */
 
+import { LockGlyph } from "./Gate";
 import { Card, StatusBadge } from "./ui";
 
 function MiniButton({
@@ -44,6 +45,7 @@ export function RatingStatusBar({
   onEvaluate,
   onLoadModel,
   onClear,
+  modelLocked = false,
 }: {
   nSelected: number;
   /** 0.1m units remaining of the £100.0m budget (negative when over). */
@@ -57,6 +59,8 @@ export function RatingStatusBar({
   onEvaluate: () => void;
   onLoadModel: () => void;
   onClear: () => void;
+  /** Public build, no key yet: the shortcut opens the inline key form. */
+  modelLocked?: boolean;
 }) {
   const overBudget = budgetLeft < 0;
   const ready = legal && !evaluating;
@@ -80,12 +84,24 @@ export function RatingStatusBar({
           </span>
         </div>
         <div className="flex gap-2">
-          <MiniButton
-            label={loadingModel ? "LOADING…" : "LOAD MODEL XV"}
-            onClick={onLoadModel}
-            busy={loadingModel}
-            disabled={evaluating}
-          />
+          {modelLocked ? (
+            <button
+              onClick={onLoadModel}
+              disabled={evaluating}
+              title="Keyholders-only — enter the desk key to load the model's squad"
+              className="hit relative inline-flex items-center gap-1.5 rounded border border-hairline px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] text-ink-dim transition-colors hover:border-ink-dim hover:bg-raised hover:text-ink-mid"
+            >
+              <LockGlyph />
+              MODEL XV
+            </button>
+          ) : (
+            <MiniButton
+              label={loadingModel ? "LOADING…" : "LOAD MODEL XV"}
+              onClick={onLoadModel}
+              busy={loadingModel}
+              disabled={evaluating}
+            />
+          )}
           <MiniButton
             label="CLEAR"
             onClick={onClear}

@@ -69,6 +69,26 @@ To run an actual FPL entry off the published verdicts:
 5. Trust ordering: the **latest** verdict wins — the ~3h pre-deadline run is
    the one to execute from if you wait until deadline day.
 
+## 2c. Access gate (2026-08-11)
+
+The public build is keyholders-only except the AI Rating tool: every other
+route renders a key screen (`src/lib/gate.ts` + `src/components/Gate.tsx`),
+the nav collapses to AI RATING + ENTER KEY while locked, and on the rating
+page the LOAD MODEL XV shortcut asks for the key inline (the picker and 0-100
+scoring stay open). Unlock persists per browser (localStorage); Settings gains
+a LOCK THE DESK control. The key is verified against a SHA-256 digest — the
+plaintext is not in the bundle — and prerendered HTML of gated routes ships
+the gate, never the desk (verified by grep over the export).
+
+**Honest limitation:** a static site has no server-side auth. The gate is a
+curtain for casual visitors (mini-league rivals with the link); the
+`data/*.json` bundle remains fetchable by URL for anyone who knows the
+contract. If hard secrecy ever matters, that needs a server or an
+authenticating proxy — out of scope for the $0 architecture. Local dev
+(`make dev`) is never gated. To rotate the key: replace `KEY_DIGEST` in
+`src/lib/gate.ts` (SHA-256 hex of the new key) — existing unlocks invalidate
+automatically because the stored value must equal the new digest.
+
 ## 3. Cache self-heal
 
 The batch job restores `data/` (raw snapshots, processed parquet, model

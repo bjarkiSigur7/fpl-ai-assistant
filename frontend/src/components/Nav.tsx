@@ -1,9 +1,11 @@
 "use client";
 
-/** Desk chrome: wordmark + primary navigation. */
+/** Desk chrome: wordmark + primary navigation (lock-aware on the public build). */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useGate } from "@/lib/gate";
+import { LockGlyph } from "./Gate";
 import { ScrollFade } from "./ScrollFade";
 
 const LINKS = [
@@ -15,8 +17,16 @@ const LINKS = [
   { href: "/settings", label: "SETTINGS" },
 ];
 
+/** Locked visitors see the open tool plus one honest way in. */
+const LOCKED_LINKS = [
+  { href: "/rating", label: "AI RATING" },
+  { href: "/", label: "ENTER KEY", lock: true },
+];
+
 export function Nav() {
   const pathname = usePathname();
+  const { locked } = useGate();
+  const links = locked ? LOCKED_LINKS : LINKS;
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
@@ -30,17 +40,19 @@ export function Nav() {
         <nav className="-mx-1.5 min-w-0 max-w-full sm:mx-0" aria-label="Primary">
           <ScrollFade fade="bg">
             <div className="flex items-center gap-0 sm:gap-1">
-              {LINKS.map(({ href, label }) => {
+              {links.map(({ href, label, ...rest }) => {
+                const withLock = "lock" in rest && rest.lock === true;
                 const active = isActive(href);
                 return (
                   <Link
-                    key={href}
+                    key={label}
                     href={href}
                     aria-current={active ? "page" : undefined}
-                    className={`relative whitespace-nowrap px-1.5 py-4 font-mono text-[10px] tracking-[0.06em] transition-colors sm:px-3.5 sm:text-[11px] sm:tracking-[0.14em] ${
+                    className={`relative inline-flex items-center gap-1.5 whitespace-nowrap px-1.5 py-4 font-mono text-[10px] tracking-[0.06em] transition-colors sm:px-3.5 sm:text-[11px] sm:tracking-[0.14em] ${
                       active ? "text-ink" : "text-ink-dim hover:text-ink-mid"
                     }`}
                   >
+                    {withLock ? <LockGlyph /> : null}
                     {label}
                     {active ? (
                       <span
