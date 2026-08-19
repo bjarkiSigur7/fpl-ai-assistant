@@ -106,12 +106,17 @@ export function RatingStatusBar({
                   e.target.value = ""; // allow re-picking the same screenshot
                 }}
               />
-              <MiniButton
-                label={scanning ? "SCANNING…" : "SCAN SCREENSHOT"}
+              <button
                 onClick={() => fileRef.current?.click()}
-                busy={scanning}
-                disabled={evaluating || loadingModel}
-              />
+                disabled={scanning || evaluating || loadingModel}
+                className={`hit relative rounded px-2.5 py-1.5 font-mono text-[10px] font-semibold tracking-[0.12em] transition-colors ${
+                  scanning || evaluating || loadingModel
+                    ? "cursor-not-allowed bg-pitch/60 text-[#0d0d0d]"
+                    : "bg-pitch text-[#0d0d0d] hover:bg-pitch-bright"
+                } ${scanning ? "tickpulse" : ""}`}
+              >
+                {scanning ? "SCANNING…" : "SCAN SCREENSHOT"}
+              </button>
             </>
           ) : null}
           {modelLocked ? (

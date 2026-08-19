@@ -393,6 +393,8 @@ export default function RatingPage() {
             evaluating={evaluating}
             hasResult={result !== null}
             onEvaluate={() => void evaluate()}
+            onScanFile={SCAN_AVAILABLE ? (f) => void scanScreenshot(f) : undefined}
+            scanning={scanning}
           />
         </>
       ) : null}
