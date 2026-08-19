@@ -280,6 +280,48 @@ class RateTeamRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------------------
+# /scan-team
+# --------------------------------------------------------------------------------------
+
+
+class ScanTeamRequest(BaseModel):
+    """POST /api/scan-team body: a squad screenshot for Gemini recognition.
+
+    The frontend downscales/re-encodes before posting, so the payload stays small;
+    the endpoint still hard-caps the decoded size. Response codes: 503 when
+    ``FPLAI_GEMINI_API_KEY`` is not configured, 502 when Gemini fails, 404 when the
+    live roster is missing on disk.
+    """
+
+    image_base64: str = Field(description="Base64 screenshot payload, no data: URI prefix")
+    mime_type: str = Field(
+        default="image/jpeg", description="Image MIME type (image/jpeg, image/png, image/webp)"
+    )
+
+
+class ScannedPlayer(BaseModel):
+    """One recognized card: what Gemini saw plus the roster resolution (if any)."""
+
+    seen_name: str
+    seen_club: str | None = None
+    seen_price: float | None = Field(default=None, description="£m as printed on the card")
+    seen_position: str | None = None
+    player_code: int | None = Field(default=None, description="None when no roster match")
+    web_name: str | None = None
+    team_short: str | None = None
+    score: float = Field(description="Match confidence 0-1; 0 when unmatched")
+
+
+class ScanTeamResponse(BaseModel):
+    """200 body of POST /api/scan-team."""
+
+    players: list[ScannedPlayer]
+    codes: list[int] = Field(description="Matched player codes, unique, capped at 15")
+    unmatched: list[str] = Field(description="Seen names that resolved to no roster player")
+    model: str = Field(description="Gemini model id that read the screenshot")
+
+
+# --------------------------------------------------------------------------------------
 # /chip-curves
 # --------------------------------------------------------------------------------------
 

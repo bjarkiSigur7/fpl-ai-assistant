@@ -52,6 +52,9 @@ from fplai.api.schemas import (
     PredictionsResponse,
     RateTeamRequest,
     RefreshStatusResponse,
+    ScanTeamRequest,
+    ScanTeamResponse,
+    ScannedPlayer,
     SeasonStateModel,
     SnapshotFreshness,
     StateResponse,
@@ -563,6 +566,82 @@ def rate_team(req: RateTeamRequest) -> RatingResult:
         )
     except TeamValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.problems) from exc
+
+
+# --------------------------------------------------------------------------------------
+# /scan-team
+# --------------------------------------------------------------------------------------
+
+#: Decoded screenshot hard cap (the frontend downscales well under this).
+_SCAN_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+@router.post(
+    "/scan-team",
+    response_model=ScanTeamResponse,
+    responses={
+        404: {"description": "Live roster missing on disk"},
+        413: {"description": "Image exceeds the 10MB decoded cap"},
+        422: {"description": "Payload is not valid base64"},
+        502: {"description": "Gemini unreachable or answered something unusable"},
+        503: {"description": "FPLAI_GEMINI_API_KEY not configured"},
+    },
+)
+def scan_team(req: ScanTeamRequest) -> ScanTeamResponse:
+    """Recognize an FPL squad screenshot with Gemini and resolve it to player codes.
+
+    Sends the image to ``gemini-3.7-flash``, fuzzy-matches every recognized card
+    against ``live_roster.parquet`` (name + position row + printed price + shirt
+    club) and answers the matched codes ready for ``POST /api/rate-team``. Cards
+    that resolve to nothing are listed in ``unmatched`` — never guessed.
+    """
+    import base64
+
+    from fplai.data import gemini
+    from fplai.scan import match_squad
+
+    try:
+        raw = base64.b64decode(req.image_base64, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="image_base64 is not valid base64") from exc
+    if len(raw) > _SCAN_MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="image exceeds the 10MB cap")
+
+    roster = _load_parquet_or_404("live_roster.parquet", "run `fplai refresh` first")
+    season = int(roster["season"].max())
+    roster = roster[roster["season"] == season]
+    _, shorts = _team_names(season)
+
+    try:
+        seen = gemini.recognize_squad(req.image_base64, req.mime_type)
+    except gemini.ConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except gemini.RecognitionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    matches = match_squad(seen, roster, shorts)
+    codes: list[int] = []
+    for m in matches:
+        if m.player_code is not None and m.player_code not in codes and len(codes) < 15:
+            codes.append(m.player_code)
+    return ScanTeamResponse(
+        players=[
+            ScannedPlayer(
+                seen_name=m.seen.name,
+                seen_club=m.seen.club,
+                seen_price=m.seen.price,
+                seen_position=m.seen.position,
+                player_code=m.player_code,
+                web_name=m.web_name,
+                team_short=m.team_short,
+                score=m.score,
+            )
+            for m in matches
+        ],
+        codes=codes,
+        unmatched=[m.seen.name for m in matches if m.player_code is None],
+        model=gemini.MODEL,
+    )
 
 
 # --------------------------------------------------------------------------------------

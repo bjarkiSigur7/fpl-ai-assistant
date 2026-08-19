@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     # Optional API keys / external services
     odds_api_key: str = ""
+    gemini_api_key: str = ""
 
     # The user's FPL entry (team) id, once they have one. 0 = not set.
     entry_id: int = 0

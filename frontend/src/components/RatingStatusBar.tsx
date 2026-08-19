@@ -2,9 +2,12 @@
 
 /**
  * RATING STATUS BAR — the build console above the squad board: n/15 selected,
- * budget remaining from £100.0m, live legality hints, LOAD MODEL XV / CLEAR
- * conveniences, and the EVALUATE button (display type — the page's one action).
+ * budget remaining from £100.0m, live legality hints, SCAN SCREENSHOT (local
+ * mode only) / LOAD MODEL XV / CLEAR conveniences, and the EVALUATE button
+ * (display type — the page's one action).
  */
+
+import { useRef } from "react";
 
 import { LockGlyph } from "./Gate";
 import { Card, StatusBadge } from "./ui";
@@ -46,6 +49,8 @@ export function RatingStatusBar({
   onLoadModel,
   onClear,
   modelLocked = false,
+  onScanFile,
+  scanning = false,
 }: {
   nSelected: number;
   /** 0.1m units remaining of the £100.0m budget (negative when over). */
@@ -61,9 +66,13 @@ export function RatingStatusBar({
   onClear: () => void;
   /** Public build, no key yet: the shortcut opens the inline key form. */
   modelLocked?: boolean;
+  /** Local mode only — undefined hides the SCAN SCREENSHOT button entirely. */
+  onScanFile?: (file: File) => void;
+  scanning?: boolean;
 }) {
   const overBudget = budgetLeft < 0;
-  const ready = legal && !evaluating;
+  const ready = legal && !evaluating && !scanning;
+  const fileRef = useRef<HTMLInputElement | null>(null);
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pt-3">
@@ -84,10 +93,31 @@ export function RatingStatusBar({
           </span>
         </div>
         <div className="flex gap-2">
+          {onScanFile ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onScanFile(file);
+                  e.target.value = ""; // allow re-picking the same screenshot
+                }}
+              />
+              <MiniButton
+                label={scanning ? "SCANNING…" : "SCAN SCREENSHOT"}
+                onClick={() => fileRef.current?.click()}
+                busy={scanning}
+                disabled={evaluating || loadingModel}
+              />
+            </>
+          ) : null}
           {modelLocked ? (
             <button
               onClick={onLoadModel}
-              disabled={evaluating}
+              disabled={evaluating || scanning}
               title="Keyholders-only — enter the desk key to load the model's squad"
               className="hit relative inline-flex items-center gap-1.5 rounded border border-hairline px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] text-ink-dim transition-colors hover:border-ink-dim hover:bg-raised hover:text-ink-mid"
             >
@@ -99,13 +129,13 @@ export function RatingStatusBar({
               label={loadingModel ? "LOADING…" : "LOAD MODEL XV"}
               onClick={onLoadModel}
               busy={loadingModel}
-              disabled={evaluating}
+              disabled={evaluating || scanning}
             />
           )}
           <MiniButton
             label="CLEAR"
             onClick={onClear}
-            disabled={nSelected === 0 || evaluating || loadingModel}
+            disabled={nSelected === 0 || evaluating || loadingModel || scanning}
           />
         </div>
       </div>

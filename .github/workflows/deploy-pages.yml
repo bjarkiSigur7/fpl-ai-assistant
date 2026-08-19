@@ -105,16 +105,22 @@ jobs:
       # root (empty basePath). (A literal empty repo variable would be
       # indistinguishable from unset in ${{ }} expressions, hence the "/"
       # sentinel handled here in shell.)
+      # SCAN_PROXY_URL (repo variable, optional) overrides the Vercel scan
+      # proxy the public build posts squad screenshots to; set it to "-" to
+      # ship without the SCAN SCREENSHOT feature.
       - name: Build static export
         working-directory: frontend
         env:
           NEXT_PUBLIC_STATIC: "1"
           PAGES_BASE_PATH: ${{ vars.PAGES_BASE_PATH }}
+          SCAN_PROXY_URL: ${{ vars.SCAN_PROXY_URL }}
         run: |
           base_path="${PAGES_BASE_PATH:-/fpl-ai-assistant}"
           if [ "$base_path" = "/" ]; then base_path=""; fi
-          echo "NEXT_PUBLIC_BASE_PATH='$base_path'"
-          NEXT_PUBLIC_BASE_PATH="$base_path" npm run build
+          proxy_url="${SCAN_PROXY_URL:-https://fpl-scan-proxy.vercel.app}"
+          if [ "$proxy_url" = "-" ]; then proxy_url=""; fi
+          echo "NEXT_PUBLIC_BASE_PATH='$base_path' NEXT_PUBLIC_SCAN_PROXY_URL='$proxy_url'"
+          NEXT_PUBLIC_BASE_PATH="$base_path" NEXT_PUBLIC_SCAN_PROXY_URL="$proxy_url" npm run build
 
       - name: Disable Jekyll processing
         run: touch frontend/out/.nojekyll

@@ -1,0 +1,6 @@
+{
+  "name": "fpl-scan-proxy",
+  "private": true,
+  "description": "Serverless Gemini proxy for the FPL AI Assistant public desk's SCAN SCREENSHOT feature",
+  "type": "module"
+}

@@ -8,12 +8,14 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { OFFLINE_HINT, fetchDreamTeam, rateTeam } from "@/lib/api";
+import { OFFLINE_HINT, SCAN_AVAILABLE, fetchDreamTeam, rateTeam, scanTeam } from "@/lib/api";
 import { seasonLabel } from "@/lib/format";
 import { usePlayerIndex, type IndexedPlayer } from "@/lib/playerIndex";
+import { encodeScanImage } from "@/lib/scanImage";
 import {
   POSITIONS,
   RateTeamValidationError,
+  ScanTeamError,
   type Position,
   type RateTeamResponse,
 } from "@/lib/types";
@@ -65,6 +67,8 @@ export default function RatingPage() {
   const [evaluating, setEvaluating] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
   const [modelHint, setModelHint] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanHint, setScanHint] = useState<string | null>(null);
   const { locked } = useGate();
   const [showUnlock, setShowUnlock] = useState(false);
   const [poolPos, setPoolPos] = useState<Position | "ALL">("ALL");
@@ -84,6 +88,7 @@ export default function RatingPage() {
     setViolations(null);
     setEngineDown(false);
     setModelHint(null);
+    setScanHint(null);
   }, []);
 
   const canAdd = useCallback(
@@ -144,13 +149,13 @@ export default function RatingPage() {
     return out;
   }, [shape, budgetLeft, codes.length, index]);
 
-  const evaluate = useCallback(async () => {
+  const runEvaluate = useCallback(async (squad: number[]) => {
     setEvaluating(true);
     setResult(null);
     setViolations(null);
     setEngineDown(false);
     try {
-      const res = await rateTeam({ player_codes: codes, season: null, gw: null });
+      const res = await rateTeam({ player_codes: squad, season: null, gw: null });
       setResult(res);
     } catch (err) {
       if (err instanceof RateTeamValidationError) setViolations(err.detail);
@@ -158,7 +163,38 @@ export default function RatingPage() {
     } finally {
       setEvaluating(false);
     }
-  }, [codes]);
+  }, []);
+
+  const evaluate = useCallback(() => runEvaluate(codes), [runEvaluate, codes]);
+
+  /** Screenshot -> Gemini -> codes; a full 15 goes straight to the verdict. */
+  const scanScreenshot = useCallback(
+    async (file: File) => {
+      setScanning(true);
+      clearOutcome();
+      try {
+        const res = await scanTeam(await encodeScanImage(file));
+        setCodes(res.codes);
+        if (res.unmatched.length > 0) {
+          setScanHint(
+            `MATCHED ${res.codes.length}/15 — NO MATCH FOR ${res.unmatched.join(", ").toUpperCase()}. ADD THEM FROM THE POOL.`,
+          );
+        } else if (res.codes.length < 15) {
+          setScanHint(`MATCHED ${res.codes.length}/15 — ADD THE REST FROM THE POOL.`);
+        }
+        if (res.codes.length === 15) await runEvaluate(res.codes);
+      } catch (err) {
+        setScanHint(
+          err instanceof ScanTeamError
+            ? err.detail.toUpperCase()
+            : "SCAN FAILED — COULD NOT READ THAT IMAGE.",
+        );
+      } finally {
+        setScanning(false);
+      }
+    },
+    [clearOutcome, runEvaluate],
+  );
 
   const doLoadModel = useCallback(async () => {
     setShowUnlock(false);
@@ -278,6 +314,8 @@ export default function RatingPage() {
               onLoadModel={loadModelXv}
               onClear={clearSquad}
               modelLocked={locked}
+              onScanFile={SCAN_AVAILABLE ? (f) => void scanScreenshot(f) : undefined}
+              scanning={scanning}
             />
             {locked && showUnlock ? (
               <InlineUnlock onUnlocked={() => void doLoadModel()} />
@@ -288,6 +326,14 @@ export default function RatingPage() {
                   ▲
                 </span>
                 {modelHint}
+              </p>
+            ) : null}
+            {scanHint ? (
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-dim">
+                <span aria-hidden="true" className="mr-1.5 text-warn">
+                  ▲
+                </span>
+                {scanHint}
               </p>
             ) : null}
             {violations ? (

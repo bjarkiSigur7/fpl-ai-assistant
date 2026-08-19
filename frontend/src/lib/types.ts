@@ -667,6 +667,55 @@ export class RateTeamValidationError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/scan-team — screenshot -> Gemini recognition -> player codes.
+// Local mode only (the Gemini key lives server-side); snake_case verbatim.
+// ---------------------------------------------------------------------------
+
+export interface ScanTeamRequest {
+  /** Base64 screenshot payload, no data: URI prefix. */
+  image_base64: string;
+  /** image/jpeg, image/png or image/webp. */
+  mime_type: string;
+}
+
+/** One recognized card: what Gemini saw plus the roster resolution (if any). */
+export interface ScannedPlayer {
+  seen_name: string;
+  seen_club: string | null;
+  /** £m as printed on the card. */
+  seen_price: number | null;
+  seen_position: string | null;
+  /** null when no roster match cleared the confidence bar. */
+  player_code: number | null;
+  web_name: string | null;
+  team_short: string | null;
+  /** Match confidence 0-1; 0 when unmatched. */
+  score: number;
+}
+
+/** 200 body of POST /api/scan-team. */
+export interface ScanTeamResponse {
+  players: ScannedPlayer[];
+  /** Matched player codes, unique, capped at 15 — feed straight into rate-team. */
+  codes: number[];
+  /** Seen names that resolved to no roster player. */
+  unmatched: string[];
+  /** Gemini model id that read the screenshot. */
+  model: string;
+}
+
+/** Thrown by api.scanTeam on any non-200 — `detail` is the backend's hint. */
+export class ScanTeamError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly detail: string,
+  ) {
+    super(detail);
+    this.name = "ScanTeamError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // display helpers shared across the app
 // ---------------------------------------------------------------------------
 

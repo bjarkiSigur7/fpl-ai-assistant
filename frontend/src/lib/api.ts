@@ -44,12 +44,14 @@ import type {
   RateTeamRequest,
   RateTeamResponse,
   Recommendation,
+  ScanTeamRequest,
+  ScanTeamResponse,
   RefreshStatus,
   SetPieceDuty,
   StateResponse,
   TeamInfo,
 } from "./types";
-import { RateTeamValidationError } from "./types";
+import { RateTeamValidationError, ScanTeamError } from "./types";
 
 export const API_URL: string =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -510,6 +512,47 @@ export async function rateTeam(req: RateTeamRequest): Promise<RateTeamResponse> 
   }
   if (!res.ok) throw new ApiError(res.status, path);
   return (await res.json()) as RateTeamResponse;
+}
+
+/**
+ * Screenshot scanning needs a server to hold the Gemini key: the local FastAPI
+ * backend in local mode, or the scan proxy (a tiny Vercel function,
+ * NEXT_PUBLIC_SCAN_PROXY_URL baked in at build time) on the public static
+ * build. Mock mode has neither.
+ */
+export const SCAN_AVAILABLE: boolean = STATIC
+  ? (process.env.NEXT_PUBLIC_SCAN_PROXY_URL ?? "") !== ""
+  : !MOCK;
+
+/**
+ * Recognize an FPL squad screenshot via Gemini 3.7 Flash and resolve it to
+ * player codes ready for rateTeam. Local mode POSTs to the backend (which also
+ * does the roster matching); static mode POSTs to the scan proxy and matches
+ * CLIENT-SIDE against the bundle pool (lib/scanStatic.ts) — same response shape
+ * either way. Throws ScanTeamError carrying the server's hint (503 = key not
+ * configured, 502 = Gemini down).
+ */
+export async function scanTeam(req: ScanTeamRequest): Promise<ScanTeamResponse> {
+  if (STATIC) {
+    const { staticScanTeam } = await import("./scanStatic");
+    return staticScanTeam(req);
+  }
+  const path = "/api/scan-team";
+  if (!SCAN_AVAILABLE) throw new ScanTeamError(405, "Scanning needs the local backend.");
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail =
+      body !== null && typeof body.detail === "string"
+        ? body.detail
+        : `Scan failed (HTTP ${res.status}).`;
+    throw new ScanTeamError(res.status, detail);
+  }
+  return (await res.json()) as ScanTeamResponse;
 }
 
 export async function startRefresh(): Promise<RefreshStatus> {

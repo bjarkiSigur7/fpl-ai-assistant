@@ -116,7 +116,17 @@ Self-hosting unlocks the local-only features the public site hides: the
 personalized my-team planner (`/api/my-team/{entry_id}`) and the in-dashboard
 refresh button. Optional: set `FPLAI_ODDS_API_KEY` (the-odds-api.com, free
 tier) in `.env` to blend live bookmaker odds into fixture predictions — the
-pipeline degrades gracefully without it. `make test` runs the offline suite
+pipeline degrades gracefully without it. Optional: set `FPLAI_GEMINI_API_KEY`
+(Google AI Studio) to enable SCAN SCREENSHOT on the AI Rating page — upload a
+squad screenshot, Gemini 3.7 Flash reads the player cards, the squad fills
+itself in and gets rated immediately.
+
+SCAN SCREENSHOT also works on the public site: the static build posts the image
+to a tiny serverless proxy (`scan-proxy/`, deployed on Vercel with the Gemini
+key in its env as `GEMINI_API_KEY`; CORS-locked via `ALLOWED_ORIGINS`) and then
+matches the recognized cards onto player codes client-side. The Pages workflow
+bakes the proxy URL at build time — override with the repo variable
+`SCAN_PROXY_URL`, or set it to `-` to ship without the feature. `make test` runs the offline suite
 (855 tests, no network); `make lint` runs ruff + eslint.
 
 **Be polite to the APIs.** All HTTP goes through a shared throttle (~1 req/s to
