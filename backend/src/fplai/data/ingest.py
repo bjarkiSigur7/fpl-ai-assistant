@@ -144,6 +144,38 @@ def _frozen_gws(state: dict[str, Any], season: int) -> set[int]:
     return {int(g) for g in frozen} if isinstance(frozen, list) else set()
 
 
+def _drop_stale_freezes(state: dict[str, Any], season: int, processed: Path) -> None:
+    """Un-freeze GWs whose spliced rows are no longer on disk (mutates ``state``).
+
+    Frozen is defined as "data_checked AND rows on disk" (module docstring), but
+    ``fplai build`` rebuilds player_gw from raw — which has no live-season rows —
+    silently wiping the splice while the state file still says frozen. Observed
+    2026-09-01: GW1's 610 rows vanished and ingest refused to restore them,
+    starving every form feature. Validating the second half of the definition
+    here makes the freeze self-healing after any rebuild.
+    """
+    frozen = _frozen_gws(state, season)
+    if not frozen:
+        return
+    gw_path = processed / "player_gw.parquet"
+    on_disk: set[int] = set()
+    if gw_path.exists():
+        try:
+            present = pd.read_parquet(gw_path, columns=["season", "gw"])
+        except (OSError, ValueError):
+            present = None
+        if present is not None:
+            on_disk = {int(g) for g in present.loc[present["season"] == season, "gw"]}
+    lost = frozen - on_disk
+    if not lost:
+        return
+    logger.warning(
+        "ingest: frozen GWs %s have no rows on disk (tables rebuilt?) — re-ingesting",
+        sorted(lost),
+    )
+    state.setdefault(str(season), {})["frozen_gws"] = sorted(frozen - lost)
+
+
 # --------------------------------------------------------------------------------------
 # GW selection
 # --------------------------------------------------------------------------------------
@@ -352,6 +384,7 @@ def ingest_played(
     """
     processed = Path(processed_dir) if processed_dir is not None else config.PROCESSED_DIR
     state = load_state(processed)
+    _drop_stale_freezes(state, ctx.season, processed)
     todo, checked = ingestable_gws(ctx, state)
     if not todo:
         return None

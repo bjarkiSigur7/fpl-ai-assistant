@@ -1153,6 +1153,47 @@ def run_predict(
 # optimize
 # ---------------------------------------------------------------------------
 
+# Cold-start ownership guard (GW1-final-call research follow-up): a brand-new
+# player has no player_match history, so his minutes come from heuristic
+# position×price priors and his rates from RatePriors — which can make a
+# second-choice signing (observed: backup GK at £5.0) look like a cheap
+# starter to the solver. Deadline-week community ownership is the one live
+# signal the model lacks: a genuine budget starter is never this unowned.
+COLD_START_BAN_MAX_PRICE = 55  # £5.5m in £0.1m units
+COLD_START_BAN_MAX_OWNERSHIP = 1.0  # selected_by_percent
+
+
+def _cold_start_ownership_bans(processed: Path, season: int) -> set[int]:
+    """Player codes to ban from a live solve: cheap, ~unowned, and history-less.
+
+    Only players absent from ``player_match`` (the cold-start set) can be
+    banned — an established player the model actually knows is never touched,
+    however low his ownership. Returns an empty set when either input table
+    is missing (pre-launch/backtest paths).
+    """
+    import pandas as pd
+
+    roster_path = processed / "live_roster.parquet"
+    pm_path = processed / "player_match.parquet"
+    if not roster_path.exists() or not pm_path.exists():
+        return set()
+    roster = pd.read_parquet(
+        roster_path, columns=["season", "player_code", "price", "selected_by_percent"]
+    )
+    roster = roster[roster["season"] == season]
+    if roster.empty:
+        return set()
+    known = set(
+        pd.read_parquet(pm_path, columns=["player_code"])["player_code"].astype(int)
+    )
+    own = pd.to_numeric(roster["selected_by_percent"], errors="coerce")
+    cheap_unowned = roster[
+        (roster["price"] <= COLD_START_BAN_MAX_PRICE)
+        & own.notna()
+        & (own < COLD_START_BAN_MAX_OWNERSHIP)
+    ]
+    return {int(c) for c in cheap_unowned["player_code"] if int(c) not in known}
+
 
 def _optimizer_prices(
     xp_window: pd.DataFrame,
@@ -1668,7 +1709,21 @@ def run_optimize(
     from fplai.optimizer.milp import SolveParams
 
     tail = 2 if plan_horizon >= 4 else 0
-    solve_params = SolveParams(no_transfer_last_gws=tail)
+    # Cold-start ownership guard: never BUY a cheap history-less player the
+    # community has abandoned (backup keepers, clearance-pending signings).
+    # Owned players are exempt — banning them would force a sell.
+    cold_bans: set[int] = set()
+    if live:
+        cold_bans = _cold_start_ownership_bans(processed, target_season)
+        if state is not None:
+            cold_bans -= {int(p.player_code) for p in state.squad}
+        if cold_bans:
+            console.print(
+                f"  cold-start ownership guard: {len(cold_bans)} cheap "
+                f"<{COLD_START_BAN_MAX_OWNERSHIP}%-owned history-less players "
+                "banned from the pool"
+            )
+    solve_params = SolveParams(no_transfer_last_gws=tail, banned_players=cold_bans)
     with _capture_chip_curves() as captured:
         rec = plans.build_recommendation(
             state,

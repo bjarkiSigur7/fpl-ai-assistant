@@ -284,3 +284,40 @@ def test_ingest_played_preseason_noop(tmp_path: Path) -> None:
     client = FakeClient(tmp_path / "raw", {})
     assert ingest.ingest_played(client, ctx, processed_dir=tmp_path) is None
     assert client.swept == []
+
+
+# ---------------------------------------------------------------------------
+# stale-freeze self-heal (2026-09-01 incident: build wiped the splice while the
+# state file kept GW1 frozen, so ingest refused to restore it)
+# ---------------------------------------------------------------------------
+
+
+def test_drop_stale_freezes_unfreezes_wiped_gws(tmp_path):
+    import pandas as pd
+
+    from fplai.data.ingest import _drop_stale_freezes
+
+    # player_gw on disk holds season-2026 rows for GW1 only
+    pd.DataFrame(
+        {"season": [2026, 2026, 2025], "gw": [1, 1, 38], "player_code": [7, 8, 9]}
+    ).to_parquet(tmp_path / "player_gw.parquet")
+    state = {"2026": {"frozen_gws": [1, 2]}}
+    _drop_stale_freezes(state, 2026, tmp_path)
+    # GW1 rows exist -> stays frozen; GW2 rows missing -> unfrozen
+    assert state["2026"]["frozen_gws"] == [1]
+
+
+def test_drop_stale_freezes_handles_missing_table(tmp_path):
+    from fplai.data.ingest import _drop_stale_freezes
+
+    state = {"2026": {"frozen_gws": [1]}}
+    _drop_stale_freezes(state, 2026, tmp_path)  # no player_gw.parquet at all
+    assert state["2026"]["frozen_gws"] == []
+
+
+def test_drop_stale_freezes_noop_without_freezes(tmp_path):
+    from fplai.data.ingest import _drop_stale_freezes
+
+    state = {}
+    _drop_stale_freezes(state, 2026, tmp_path)
+    assert state == {}

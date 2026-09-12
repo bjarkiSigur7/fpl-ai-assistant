@@ -1,7 +1,9 @@
 # STATUS.md — what works today
 
-Last updated: 2026-08-11 (pre-GW1 research + upgrade pass — see "August 2026
-upgrade pass" below; research synthesis in `research/aug-2026-update.md`).
+Last updated: 2026-08-19 (GW1 final-call pass — see below; adjudication record
+in `research/gw1-final-call-2026.md`). Previous pass 2026-08-11 (pre-GW1
+research + upgrade pass — "August 2026 upgrade pass" below; synthesis in
+`research/aug-2026-update.md`).
 Previous pass 2026-07-24 (public-release integrator pass: static publisher +
 dual-mode frontend + GitHub Actions release engineering verified end to end —
 see "Public release engineering" below). Before that 2026-07-23 (stage-6:
@@ -15,6 +17,37 @@ Companions: `ARCHITECTURE.md` (module map + schemas incl. the stage-6 contracts)
 launch), `MODEL_DESIGN_INPUTS.md` (model spec), `research/chip-strategy-verdict.md`
 (evidence review of the launch-day chip cascade — its recommendations #1/#2 are what
 `fplai simulate` implements).
+
+## GW1 final-call pass — COMPLETE (2026-08-19, 2 days before deadline)
+
+Full pre-deadline adjudication (record: `research/gw1-final-call-2026.md`):
+fresh `fplai refresh` on the 08-19 snapshot (595 elements, 6.21m managers),
+retrain (byte-identical — no new training rows), 6-agent research sweep with
+adversarial API verification, six comparison MILP solves, and a starter
+fact-check of every low-ownership solver pick.
+
+1. **Cold-start ownership guard** (`pipeline._cold_start_ownership_bans`,
+   wired into live `run_optimize`): cheap (≤£5.5) sub-1%-owned players with no
+   `player_match` history are banned from the buy pool — the 08-19 free solve
+   had drafted THREE verified non-starters (Rulli = Donnarumma's backup,
+   Chavarria, Khalaili) off position×price priors. 73 banned on live data;
+   owned players exempt; self-heals as in-season ingest gives debutants
+   history rows. **916 offline tests pass** (2 new), ruff clean; live re-run
+   verified (guard printed, clean bench, degenerate gate quiet).
+2. **Comparison solves** (no-chips, tail=2, gap≈0): locking Haaland costs
+   4.4–4.7 objective pts over 8 GWs and GW1 xP is *higher* (Haaland-c 8.19×2);
+   decay 0.84 vs 0.90 produces the identical GW1 squad. The adopted campaign
+   squad (research doc) locks Haaland on EO grounds — 69.9% owned + 62.7%
+   captaincy ≈ 130% GW1 EO vs a ~0.55 pt/GW EV cost; the model still has no
+   EO term (open backlog item #8).
+3. **Chip sim 08-19** (1,000 rollouts): all eight chips HOLD at GW1; WC1 best
+   GW13 (+16.5±20.3), FH1 GW14, BB1 GW1 (P(beats hold) 0.17), TC1 GW2 —
+   surface flat as ever; doctrine = engineered peaks (TC on Haaland v promoted
+   GW3/7/16, WC1 in the GW5→6 three-week break window, FH1 insurance).
+4. Season research locked: no AFCON; set-2 chip landscape = Carabao-final
+   BGW30 + FA-Cup-SF BGW33 + catch-up DGWs ~34-36; nine new managers; ranked
+   model-improvement backlog (hazard model, FT/ITB terms, SAA chip eval,
+   price ingestion, fixture scenarios, rank-objective mode) in the research doc.
 
 ## August 2026 upgrade pass — COMPLETE (2026-08-11, 10 days before GW1)
 

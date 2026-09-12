@@ -456,3 +456,52 @@ def test_refresh_runs_optimize_best_effort_and_prints_launch_watch(
     assert "optimize blew up" in out
     assert "launch watch" in out
     assert "NOT LIVE" in out
+
+
+# ---------------------------------------------------------------------------
+# cold-start ownership guard
+# ---------------------------------------------------------------------------
+
+
+def _guard_roster(tmp_path: Path, rows: list[dict[str, Any]]) -> Path:
+    processed = tmp_path / "processed"
+    processed.mkdir(exist_ok=True)
+    pd.DataFrame(rows).to_parquet(processed / "live_roster.parquet")
+    return processed
+
+
+def _guard_history(processed: Path, codes: list[int]) -> None:
+    pd.DataFrame({"player_code": codes}).to_parquet(processed / "player_match.parquet")
+
+
+def test_cold_start_guard_bans_cheap_unowned_historyless(tmp_path: Path) -> None:
+    processed = _guard_roster(
+        tmp_path,
+        [
+            # backup GK: cheap, ~unowned, no history -> banned
+            {"season": 2026, "player_code": 1, "price": 50, "selected_by_percent": "0.0"},
+            # cheap + unowned but the model KNOWS him (history) -> kept
+            {"season": 2026, "player_code": 2, "price": 45, "selected_by_percent": "0.4"},
+            # cold start but the community backs him -> kept
+            {"season": 2026, "player_code": 3, "price": 40, "selected_by_percent": "14.4"},
+            # cold start, unowned, but premium-priced (real signing) -> kept
+            {"season": 2026, "player_code": 4, "price": 75, "selected_by_percent": "0.2"},
+            # exactly at the ownership threshold -> kept (strict <)
+            {"season": 2026, "player_code": 5, "price": 40, "selected_by_percent": "1.0"},
+            # previous-season row must be ignored entirely
+            {"season": 2025, "player_code": 6, "price": 40, "selected_by_percent": "0.0"},
+        ],
+    )
+    _guard_history(processed, [2])
+    assert pipeline._cold_start_ownership_bans(processed, 2026) == {1}
+
+
+def test_cold_start_guard_empty_when_tables_missing(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    assert pipeline._cold_start_ownership_bans(processed, 2026) == set()
+    pd.DataFrame(
+        [{"season": 2026, "player_code": 1, "price": 40, "selected_by_percent": "0.0"}]
+    ).to_parquet(processed / "live_roster.parquet")
+    # roster alone (no player_match) must not ban anyone
+    assert pipeline._cold_start_ownership_bans(processed, 2026) == set()
