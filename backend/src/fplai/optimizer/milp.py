@@ -13,11 +13,12 @@ The objective is decayed weekly xP with captain/vice/TC weighting, per-slot benc
 -4/hit, an incremental FT continuation value, and an in-the-bank value.
 
 Deviation from the §3.2 one-liner, documented: the literal transcription
-``raw_ft = fts - transfer_count + 1 - use_wc - use_fh`` contradicts the authoritative
-game rule (FPL_KNOWLEDGE §1.6: WC/FH pass the FT bank through with the +1 accrual). We
-keep the exact one-hot/big-M machinery but feed it an *effective* FT-consuming transfer
-count: on 2024-25+ WC/FH weeks it may drop to 0 (bank pass-through; the canonical value
-is always weakly optimal, and reported trajectories are replayed through
+``raw_ft = fts - transfer_count + 1 - use_wc - use_fh`` contradicts the game rule
+(``rules.next_free_transfers``: 2024-25+ WC/FH weeks MAINTAIN the bank — no
+consumption and no +1 accrual; corrected 2026-09-15 against a live 2026-27 entry).
+We keep the exact one-hot/big-M machinery but feed it an *effective* FT-consuming
+transfer count: on 2024-25+ WC/FH weeks it is pinned to exactly 1 (so the bank passes
+through unchanged; reported trajectories are replayed through
 ``rules.next_free_transfers`` at extraction — see ``_add_ft_machine``/``extract``); on
 pre-2024 WC/FH weeks it is pinned to ``fts[w]`` exactly, reproducing the old
 chips-WIPE-the-bank rule. The bank cap is season-aware
@@ -873,8 +874,13 @@ class _PlanModel:
                 m.add(eff - fts_w + big * (1 - chips) >= 0, f"ft_eff_wipe_lb[{w}]")
                 m.add(eff - fts_w - big * (1 - chips) <= 0, f"ft_eff_wipe_ub[{w}]")
             else:
-                # 2024-25+: eff may drop to 0 on chip weeks (canonical: pass-through)
-                m.add(eff - self.count[w] <= 0, f"ft_eff_count_ub[{w}]")
+                # 2024-25+: chip weeks MAINTAIN the bank — rules.next_free_transfers is
+                # min(fts, cap): no consumption, no +1 accrual (verified live: 1 FT
+                # into a GW4 wildcard -> 1 FT in GW5). Pin eff = 1 on chip weeks so
+                # raw = fts - 1 + 1 = fts; plain weeks keep eff = count.
+                m.add(eff - self.count[w] - big * chips <= 0, f"ft_eff_count_ub[{w}]")
+                m.add(eff - 1 + big * (1 - chips) >= 0, f"ft_eff_chip_lb[{w}]")
+                m.add(eff - 1 - big * (1 - chips) <= 0, f"ft_eff_chip_ub[{w}]")
             raw = self._fts_expr(w) - eff + 1
             a, b = self.ft_above[w], self.ft_below[w]
             m.add(raw - big * a <= cap, f"ft_raw_ub[{w}]")

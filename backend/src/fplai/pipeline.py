@@ -768,6 +768,37 @@ def _future_player_match(pm: pd.DataFrame, target_fx: pd.DataFrame) -> pd.DataFr
     return out[pm.columns]
 
 
+#: FPL points / BPS deducted for a red card (the points figure includes any
+#: yellow-card deduction — rules._SCORING_BASE["red_cards"]).
+_RED_CARD_POINTS = 3
+_RED_CARD_BPS = 9
+
+
+def _strip_red_card_penalties(pm: pd.DataFrame) -> pd.DataFrame:
+    """Add red-card deductions back into ``total_points``/``bps`` (live features only).
+
+    Trained on history, the models read a negative last-match score as "red
+    card -> banned next match" (84% of red cards are followed by a 0-minute PL
+    match).  Live, the bootstrap ``status == "s"`` flag is the authority on
+    bans (forced out-buckets), and the synthesized horizon rows never consume
+    window slots — so the proxy froze a card into every future GW (Palmer,
+    GW8 2026: ban served in the Carabao Cup, q0 0.73 for all eight GWs).
+    Training is untouched; only the live feature build sees the stripped rows.
+    """
+    import pandas as pd
+
+    if "red_cards" not in pm.columns:
+        return pm
+    reds = pd.to_numeric(pm["red_cards"], errors="coerce").fillna(0.0)
+    if not (reds > 0).any():
+        return pm
+    out = pm.copy()
+    for col, per_card in (("total_points", _RED_CARD_POINTS), ("bps", _RED_CARD_BPS)):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce") + per_card * reds
+    return out
+
+
 def _predict_frames(
     features: pd.DataFrame,
     fixtures: pd.DataFrame,
@@ -1074,6 +1105,7 @@ def run_predict(
         aug = dict(tables)
         aug["player_match"] = pd.concat([pm, synth], ignore_index=True)
         if ctx is not None:
+            aug["player_match"] = _strip_red_card_penalties(aug["player_match"])
             live_gws = sorted(
                 int(g)
                 for g in next_keys.loc[next_keys["season"] == ctx.season, "gw"].unique()

@@ -149,8 +149,8 @@ def _feasible_next_states(fts: int, count: int, chip: bool, season: int) -> set[
     ``(eff, a, b, next)`` assignment. The machine is correct iff, for every reachable
     input, the CANONICAL rules value is the maximum of the feasible set (a higher FT
     state is always weakly better, and extraction replays the rules), and the set is
-    a singleton everywhere the game state is actually pinned — i.e. everywhere except
-    2024-25+ WC/FH weeks, where the model deliberately leaves ``eff`` slack.
+    a singleton everywhere: since 2026-09-15 chip weeks pin ``eff = 1`` (the bank is
+    maintained with no accrual), so the game state is pinned in every regime.
     """
     flags = rules.SEASON_FLAGS[season]
     cap = flags.max_free_transfers
@@ -170,7 +170,12 @@ def _feasible_next_states(fts: int, count: int, chip: bool, season: int) -> set[
             if not (eff - fts - big * (1 - chips) <= 0):
                 continue
         else:
-            if not (eff - count <= 0):
+            # 2024-25+: chip weeks pin eff = 1 (bank maintained: raw = fts)
+            if not (eff - count - big * chips <= 0):
+                continue
+            if not (eff - 1 + big * (1 - chips) >= 0):
+                continue
+            if not (eff - 1 - big * (1 - chips) <= 0):
                 continue
         raw = fts - eff + 1
         for a, b in itertools.product((0, 1), repeat=2):
@@ -215,11 +220,11 @@ def test_ft_machine_matches_rules_on_random_sequences(seed: int) -> None:
         assert max(feasible) == expected, (
             f"{label}: canonical next state {max(feasible)} != rules {expected}"
         )
-        if not (chip and not flags.chips_wipe_banked_fts):
-            # everywhere the game state is pinned, the machine admits exactly one value
-            assert feasible == {expected}, (
-                f"{label}: constraints admit {sorted(feasible)}, rules say {expected}"
-            )
+        # the game state is pinned everywhere (chip weeks included since 2026-09-15):
+        # the machine must admit exactly one value
+        assert feasible == {expected}, (
+            f"{label}: constraints admit {sorted(feasible)}, rules say {expected}"
+        )
         fts = expected
 
 
@@ -249,8 +254,8 @@ def test_ft_trajectory_pinned_even_with_zero_ft_value() -> None:
     )
     assert plan.gws[0].chip == "wc1"
     replay_ft_trajectory(plan, state)
-    # WC passes the bank through with +1 accrual: 2 -> 3 regardless of WC transfers
-    assert plan.gws[1].free_transfers == 3
+    # WC maintains the bank (no accrual): 2 -> 2 regardless of WC transfers
+    assert plan.gws[1].free_transfers == 2
 
 
 def test_pre_2024_regime_wildcard_wipes_bank_and_cap_is_two() -> None:

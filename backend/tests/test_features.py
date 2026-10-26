@@ -350,6 +350,48 @@ class TestPlayerFormWindows:
         assert cross["f_new_club"] == 1.0 and cross["f_new_season"] == 1.0
 
 
+    def test_unplayed_future_rows_do_not_consume_window_slots(
+        self, tables: dict[str, pd.DataFrame], frame: pd.DataFrame
+    ) -> None:
+        # Live predict appends synthesized rows for unplayed fixtures (all outcomes
+        # NaN). Every future row must see the same as-of-deadline history: GW+2's
+        # mean_1 is still the last PLAYED match, not the empty GW+1 synthetic row.
+        t2 = {k: v.copy() for k, v in tables.items()}
+        fx = t2["fixtures"]
+        future = pd.DataFrame(
+            [
+                _fixture_row(2025, 4, 104, "2025-08-30", 1, 4, 0, 0),
+                _fixture_row(2025, 5, 105, "2025-09-13", 4, 1, 0, 0),
+            ]
+        ).assign(home_goals=np.nan, away_goals=np.nan, finished=False)
+        t2["fixtures"] = pd.concat([fx, future], ignore_index=True)
+        pm = t2["player_match"]
+        synth = pd.DataFrame(
+            [
+                _pm_row(2025, 4, 104, 101, 1, 4, True, "MID"),
+                _pm_row(2025, 5, 105, 101, 1, 4, False, "MID"),
+            ]
+        )
+        outcome = [c for c in fw.LABEL_COLUMNS if c in synth.columns]
+        synth[outcome] = np.nan
+        t2["player_match"] = pd.concat([pm, synth], ignore_index=True)
+        rebuilt = fw.build_feature_frame(t2, target="match")
+        gw4, gw5 = _row(rebuilt, 101, 2025, 4), _row(rebuilt, 101, 2025, 5)
+        assert gw4["f_points_mean_1"] == 1.0  # 2025 GW3, the last played match
+        form = [f"f_{s}_mean_{w}" for s in ("points", "minutes", "goals") for w in fw.WINDOWS]
+        form += [f"f_starts_share_{w}" for w in fw.STARTS_WINDOWS]
+        form += [f"f_team_{s}_mean_{w}" for s in fw.TEAM_STATS for w in fw.WINDOWS]
+        for c in form:
+            assert gw5[c] == pytest.approx(gw4[c], nan_ok=True), c
+        # Played history is untouched by the appended rows.
+        fcols = sorted(c for c in frame.columns if c.startswith(fw.FEATURE_PREFIX))
+        pd.testing.assert_frame_equal(
+            frame[fcols].reset_index(drop=True),
+            rebuilt.loc[rebuilt["gw"].le(3) | rebuilt["season"].lt(2025), fcols]
+            .reset_index(drop=True),
+        )
+
+
 class TestTeamAndOpponentForm:
     def test_team_windows(self, frame: pd.DataFrame) -> None:
         row = _row(frame, 101, 2024, 4)
