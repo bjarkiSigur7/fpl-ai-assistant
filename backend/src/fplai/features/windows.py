@@ -200,6 +200,30 @@ def _window_means(
     return out
 
 
+def _slot_window_means(
+    gid: np.ndarray, values: np.ndarray, windows: tuple[int, ...], slots: np.ndarray
+) -> dict[int, np.ndarray]:
+    """:func:`_window_means` where only ``slots`` rows occupy window positions.
+
+    Unplayed rows (synthesized future fixtures: outcomes all NaN) must not eat a
+    window slot — otherwise a GW+3 row's ``mean_3`` window is three empty future
+    fixtures, the features go NaN and the GBMs read the player as history-less
+    (the 2026-10-14 bug: nailed starters' q0 rose to 0.4-0.7 beyond the next GW).
+    Each non-slot row takes the value of the last slot row at or before it in its
+    group (NaN if none). With every row a slot this equals :func:`_window_means`.
+    """
+    if slots.all():
+        return _window_means(gid, values, windows)
+    idx = np.flatnonzero(slots)
+    if not len(idx):
+        return {w: np.full(len(values), np.nan) for w in windows}
+    inner = _window_means(gid[idx], values[idx], windows)
+    k = np.cumsum(slots) - 1  # position in ``idx`` of the last slot row at/before each row
+    kc = np.clip(k, 0, None)
+    ok = (k >= 0) & (gid[idx[kc]] == gid)
+    return {w: np.where(ok, arr[kc], np.nan) for w, arr in inner.items()}
+
+
 def _defcon_count(pm: pd.DataFrame) -> np.ndarray:
     """Defensive-contribution count: the API column (2025+) or the CBIT/CBIRT
     reconstruction from rich stats (2016-18): DEF counts CBI + tackles, everyone
@@ -223,14 +247,15 @@ def _player_form_features(pm: pd.DataFrame) -> pd.DataFrame:
     gid = pm.groupby(["player_code"], sort=False).ngroup().to_numpy()
     prior_abs, valid = _prior_boundary(pm, ["player_code"], ["season", "gw"])
 
+    played = np.isfinite(_as_float(pm["minutes"]))
     feats: dict[str, np.ndarray] = {}
     for stem, col in PLAYER_STATS.items():
         values = _defcon_count(pm) if col == "_defcon_count" else _as_float(pm[col])
-        means = _window_means(gid, values, WINDOWS)
+        means = _slot_window_means(gid, values, WINDOWS, played)
         for w in WINDOWS:
             feats[f"f_{stem}_mean_{w}"] = _take_prior(means[w], prior_abs, valid)
 
-    starts_means = _window_means(gid, _as_float(pm["starts"]), STARTS_WINDOWS)
+    starts_means = _slot_window_means(gid, _as_float(pm["starts"]), STARTS_WINDOWS, played)
     for w in STARTS_WINDOWS:
         feats[f"f_starts_share_{w}"] = _take_prior(starts_means[w], prior_abs, valid)
 
@@ -299,9 +324,10 @@ def _team_form_features(tm: pd.DataFrame) -> pd.DataFrame:
     gid = tm.groupby(["season", "team_code"], sort=False).ngroup().to_numpy()
     prior_abs, valid = _prior_boundary(tm, ["season", "team_code"], ["gw"])
 
+    played = np.isfinite(_as_float(tm["gf"]))
     feats: dict[str, np.ndarray] = {}
     for stem in TEAM_STATS:
-        means = _window_means(gid, _as_float(tm[stem]), WINDOWS)
+        means = _slot_window_means(gid, _as_float(tm[stem]), WINDOWS, played)
         for w in WINDOWS:
             feats[f"f_team_{stem}_mean_{w}"] = _take_prior(means[w], prior_abs, valid)
     form = pd.concat(

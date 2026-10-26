@@ -410,7 +410,7 @@ def test_wildcard_many_transfers_no_hits_ft_bank_preserved() -> None:
     assert g0.chip == "wc1"
     assert len(g0.transfers_in) == 8  # every planted upgrade squadded
     assert g0.hit_points == 0 and g1.hit_points == 0
-    assert g1.free_transfers == 2  # WC passes the FT bank through with +1 accrual
+    assert g1.free_transfers == 1  # WC maintains the bank: 1 FT in -> 1 FT out
     # money-bank consistency: purchase == current for all owned, so sales realize price
     price_of = dict(zip(prices.player_code, prices.price, strict=True))
     expected_bank = sum(price_of[p] for p in g0.transfers_out) - sum(
@@ -456,7 +456,7 @@ def test_free_hit_squad_reverts_next_gw() -> None:
         assert g.transfers_in == [] and g.transfers_out == []  # no permanent transfers
         assert g.bank == 20
     assert g1.free_transfers == 2  # banked in GW10
-    assert g2.free_transfers == 3  # FH passes the FT bank through with +1
+    assert g2.free_transfers == 2  # FH maintains the bank (no accrual)
     assert_ft_trajectory(plan, state)
 
 

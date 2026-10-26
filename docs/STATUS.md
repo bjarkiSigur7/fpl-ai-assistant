@@ -18,6 +18,22 @@ launch), `MODEL_DESIGN_INPUTS.md` (model spec), `research/chip-strategy-verdict.
 (evidence review of the launch-day chip cascade — its recommendations #1/#2 are what
 `fplai simulate` implements).
 
+## In-season fixes — 2026-09-15 (after GW4)
+
+1. **Wildcard/Free Hit FT rule corrected** (`rules.next_free_transfers`, MILP
+   `_add_ft_machine`): 2024-25+ chip weeks MAINTAIN the free-transfer bank —
+   no consumption, no +1 accrual (`min(current, cap)`). The encoding carried a
+   +1 accrual; a live 2026-27 entry (1 FT into a GW4 wildcard → 1 FT in GW5)
+   proved it wrong. Entry-state replay and solver trajectories now follow the
+   game; MILP tests updated (WC 1→1, FH 2→2).
+2. **Ingest freeze self-heal** (`ingest._drop_stale_freezes`, 2026-09-01):
+   `build` wipes the live splice; frozen GWs with no rows on disk are
+   re-ingested instead of skipped (the GW1-splice-lost incident).
+3. **In-season retrain must pin `--seasons 2016..2025`**: including the live
+   season makes the minutes model's isotonic calibration fit on a tiny 2026
+   holdout (observed q0 0.51 for Haaland). Documented in the campaign memory;
+   a code guard (calibrate on the last *complete* season) is the follow-up.
+
 ## GW1 final-call pass — COMPLETE (2026-08-19, 2 days before deadline)
 
 Full pre-deadline adjudication (record: `research/gw1-final-call-2026.md`):
@@ -426,3 +442,37 @@ time in memory; artifacts on disk are untouched.
    API — the endpoint falls back loudly to the initial-squad verdict until then.
 9. **Blanks (1-2 pts)** remain our weakest xP category vs OpenFPL; revisit with
    team-partitioned CV. Understat backfill (data coverage note) still running.
+
+## Horizon-feature fix — 2026-10-14
+
+- **Bug:** `features/windows.py` rolling windows were row-count based, so the
+  synthesized future rows that live predict appends (all outcomes NaN) consumed
+  window slots. For GW+k rows the `mean_1/3/5` (and team-form) windows went NaN,
+  and the GBMs read nailed starters as history-less. Effect on the GW6/GW7 runs:
+  q0 rose from ~0.05 at the next GW to 0.4–0.7 later (Cunha 0.05 → 0.70 at GW10),
+  roughly halving every player's value beyond the next GW. That biased solves
+  toward short-term moves and undervalued holds and banked FTs.
+- **Fix:** `_slot_window_means` makes only played rows (finite minutes; finite
+  team goals for team form) occupy window slots, and unplayed rows inherit the
+  last played window. Historical `player_match` has zero NaN-minute rows, so
+  training features are byte-identical and no retrain is needed.
+- **Verified:** regression test
+  `test_unplayed_future_rows_do_not_consume_window_slots` fails on the old code
+  and passes on the new. Feature/live/pipeline/minutes/rates suites pass.
+  Post-fix horizon q0 is flat at ~0.04–0.09 for nailed starters.
+
+## Red-card proxy fix — 2026-10-26
+
+- **Bug:** the minutes/rates GBMs learned a negative last-match score as a ban
+  signal (84% of historical red cards are followed by a 0-minute PL match).
+  Live, the horizon rows inherit the last played window (2026-10-14 fix), so a
+  red card froze into every future GW. Palmer (red card GW8, ban served in the
+  Carabao Cup, FPL status `a`) went to q0 0.73 for all of GW9–16 and 8-GW xP
+  9.9 instead of 38.1 — the solver's top move was selling him.
+- **Fix:** `pipeline._strip_red_card_penalties` adds the red-card deduction back
+  into `total_points` (+3) and `bps` (+9) for the live feature build only;
+  bans come from the bootstrap `status == "s"` flag (forced out-buckets).
+  Training features are untouched — no retrain. Tests in `tests/test_pipeline.py`.
+- **Known, not fixed:** availability flags (`d`/75%) are applied to every
+  horizon GW, so a doubtful player's q0 stays ~0.4 for the whole horizon
+  (Calafiori GW9, Gibbs-White GW8). Should decay after the next GW.

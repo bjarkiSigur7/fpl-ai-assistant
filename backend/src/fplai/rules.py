@@ -413,9 +413,12 @@ def next_free_transfers(current: int, used: int, season: int, wildcard_or_fh: bo
     (transfers then cost nothing and consume no FTs).
 
     Season regimes: from 2024-25, ``FT_next = min(current - used + 1, 5)`` floored at
-    1, and WC/FH pass the bank through with the +1 accrual (``min(current + 1, 5)``).
-    Through 2023-24 the bank cap is 2 and playing WC/FH WIPES banked FTs (next GW
-    starts on exactly 1). GW1 pre-deadline unlimited transfers are out of scope.
+    1, and WC/FH MAINTAIN the bank with no accrual (``min(current, 5)``): the chip
+    week neither consumes nor adds a free transfer — "you don't get an extra free
+    transfer in the week you Wildcard" (FFS rules explainer; verified against a real
+    2026-27 entry: 1 FT into a GW4 wildcard -> 1 FT in GW5). Through 2023-24 the
+    bank cap is 2 and playing WC/FH WIPES banked FTs (next GW starts on exactly 1).
+    GW1 pre-deadline unlimited transfers are out of scope.
     """
     _validate_season(season)
     if current < 0 or used < 0:
@@ -425,7 +428,7 @@ def next_free_transfers(current: int, used: int, season: int, wildcard_or_fh: bo
     if wildcard_or_fh:
         if flags.chips_wipe_banked_fts:
             return 1
-        return min(current + 1, cap)
+        return max(1, min(current, cap))
     return max(1, min(current - used + 1, cap))
 
 

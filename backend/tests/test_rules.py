@@ -332,9 +332,9 @@ class TestTransferStateMachine:
         assert next_free_transfers(2, 7, 2016, True) == 1  # used is irrelevant on WC/FH
 
     def test_chips_pass_bank_through_from_2024(self) -> None:
-        assert next_free_transfers(3, 15, 2024, True) == 4  # +1 accrual, no consumption
+        assert next_free_transfers(3, 15, 2024, True) == 3  # maintained: no accrual, no consumption
         assert next_free_transfers(5, 0, 2025, True) == 5  # still capped
-        assert next_free_transfers(1, 11, 2026, True) == 2
+        assert next_free_transfers(1, 11, 2026, True) == 1  # 1 FT into a WC week -> 1 FT out (verified live)
 
     def test_invalid_inputs_raise(self) -> None:
         with pytest.raises(ValueError):

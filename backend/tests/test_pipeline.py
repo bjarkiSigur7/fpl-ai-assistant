@@ -451,6 +451,29 @@ def test_future_player_match_drops_long_departed_players() -> None:
     assert set(synth["player_code"]) == {2}
 
 
+def test_strip_red_card_penalties_adds_back_deductions() -> None:
+    pm = pd.DataFrame(
+        {
+            "player_code": [1, 1, 2, 3],
+            "total_points": [2.0, -1.0, 5.0, float("nan")],
+            "bps": [10.0, -4.0, 20.0, float("nan")],
+            "red_cards": [0, 1, 0, float("nan")],  # player 3: synthesized future row
+        }
+    )
+    out = pipeline._strip_red_card_penalties(pm)
+    assert out["total_points"].tolist()[:3] == [2.0, 2.0, 5.0]
+    assert out["bps"].tolist()[:3] == [10.0, 5.0, 20.0]
+    assert pd.isna(out["total_points"].iloc[3])  # unplayed rows stay NaN
+    assert pm["total_points"].iloc[1] == -1.0  # input not mutated
+
+
+def test_strip_red_card_penalties_noop_without_cards() -> None:
+    pm = pd.DataFrame({"total_points": [1.0], "bps": [3.0], "red_cards": [0]})
+    assert pipeline._strip_red_card_penalties(pm) is pm
+    no_col = pd.DataFrame({"total_points": [1.0]})
+    assert pipeline._strip_red_card_penalties(no_col) is no_col
+
+
 def test_run_predict_live_mode_degrades_without_upcoming_fixtures(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
